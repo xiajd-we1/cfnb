@@ -7,7 +7,6 @@
 [![License](https://img.shields.io/badge/License-MIT-green)]()
 [![Last Commit](https://img.shields.io/github/last-commit/xinyitang3/cfnb?label=Last%20Commit)](https://github.com/xinyitang3/cfnb/commits)
 [![Repo Size](https://img.shields.io/github/repo-size/xinyitang3/cfnb?label=Repo%20Size)](https://github.com/xinyitang3/cfnb)
-[![Telegram](https://img.shields.io/badge/Telegram-联系_Mia-26A5E4?logo=telegram)](tg://user?id=5126237436)
 
 > ⭐ **如果觉得好用，点个 Star 支持一下～**
 
