@@ -37,7 +37,7 @@
 | :--- | :--- |
 | 🌐 **多模式筛选** | 全局最优 TopN / 分国家最优 TopN |
 | ⚡ **TCP 连接测试** | 并发测延迟，可设成功率阈值 |
-| 🔍 **可用性二次检测** | API 验证代理能力 （严格检查 `ok` 字段，排除纯 IPv6 节点） |
+| 🔍 **可用性二次检测** | API 验证代理能力 |
 | 📶 **真实带宽测速** | curl 下载测速，实测吞吐量 |
 | 🚫 **屏蔽国家过滤** | DNS 更新时屏蔽指定国家（**仅作用于 DNS 更新环节**） |
 | 🌍 **国家过滤前置** | TCP 测试前即过滤指定国家（减少无效测试） |
@@ -308,17 +308,11 @@ python3 main.py
 | `AVAILABILITY_CHECK_API` | `string` | `"https://api.check.proxyip.cmliussss.net/check"` | 可用性检测 API 地址 |
 | `AVAILABILITY_TIMEOUT` | `int` | `5` | 可用性 API 读取超时（秒） |
 | `AVAILABILITY_CONNECT_TIMEOUT` | `int` | `5` | 可用性 API 连接超时（秒） |
-| `AVAILABILITY_RETRY_MAX` | `int` | `1` | 可用性检测最大重试轮数（因节点内已多次探测，设为 1 即可） |
+| `AVAILABILITY_RETRY_MAX` | `int` | `2` | 可用性检测最大重试轮数 |
 | `AVAILABILITY_RETRY_DELAY` | `int` | `5` | 可用性检测重试间隔（秒） |
-| `AVAILABILITY_PROBES` | `int` | `3` | 每个节点独立探测的 API 请求次数，要求**全部通过**才视为可用 |
 | `FILTER_IPV6_AVAILABILITY` | `boolean` | `true` | **仅作用于 DNS**：是否过滤落地仅 IPv6 的节点（`ipv6_only`） |
 
-> 💡 可用性检测逻辑：  
-> - 每个节点会根据 `AVAILABILITY_PROBES` 进行多次探测（默认 3 次）。  
-> - **每次探测都必须同时满足**：API 返回 `success: true`、IPv4 或 IPv6 探针的 `ok` 字段为 `true`、协议栈不能为 `ipv6_only`。  
-> - 若任何一次探测失败，节点立即淘汰，不再继续。  
-> - `AVAILABILITY_RETRY_MAX` 控制整轮检测失败后的重试次数，默认为 1（不重试）。  
-> - IPv6 过滤在可用性检测阶段已提前拦截 `ipv6_only` 节点，DNS 更新阶段仍有二次兜底。
+> 💡 IPv6 过滤逻辑：通过 API 返回的 `inferred_stack` 判断，仅淘汰 `ipv6_only` 节点，保留 `ipv4_only` 和 `dual_stack` 节点。
 
 **带宽测速参数**
 
@@ -368,7 +362,7 @@ python3 main.py
 > `162.159.x.x:443#HK`
 
 **重要说明**：  
-- `ip.txt` 中保存的是**基于带宽测速排序、未经屏蔽国家过滤的原始结果**，以确保 GitHub 推送的节点列表完整且不丢失任何高速 IP。  
+- `ip.txt` 中保存的是**基于带宽测速排序的结果**，以确保 GitHub 推送的节点列表完整且不丢失任何高速 IP。  
 - Cloudflare DNS 批量更新环节会额外应用 `FILTER_IPV6_AVAILABILITY`（过滤落地 IPv6）和 `BLOCKED_COUNTRIES`（屏蔽特定国家）两项过滤，仅将符合条件的 IP 写入 DNS 记录。
 
 若你已配置 GitHub 自动同步，该文件将自动推送至远程仓库，订阅链接请参考 [配置 GitHub 自动同步](#-配置-github-自动同步) 章节末尾。

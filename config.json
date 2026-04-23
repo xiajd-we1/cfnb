@@ -94,14 +94,11 @@
     "AVAILABILITY_CONNECT_TIMEOUT": 5,
     "_comment_AVAILABILITY_CONNECT_TIMEOUT": "可用性 API 连接超时（秒）",
 
-    "AVAILABILITY_RETRY_MAX": 1,
-    "_comment_AVAILABILITY_RETRY_MAX": "可用性检测整体失败（通过率为0）时的最大重试轮数（因节点内已多次探测，设为1）",
+    "AVAILABILITY_RETRY_MAX": 2,
+    "_comment_AVAILABILITY_RETRY_MAX": "可用性检测整体失败（通过率为0）时的最大重试轮数",
 
     "AVAILABILITY_RETRY_DELAY": 5,
     "_comment_AVAILABILITY_RETRY_DELAY": "可用性检测重试间隔（秒）",
-
-    "AVAILABILITY_PROBES": 3,
-    "_comment_AVAILABILITY_PROBES": "每个节点独立探测的 API 请求次数，要求全部通过才视为可用",
 
     "FILTER_IPV6_AVAILABILITY": true,
     "_comment_FILTER_IPV6_AVAILABILITY": "【仅DNS】是否过滤落地为 IPv6 的节点",

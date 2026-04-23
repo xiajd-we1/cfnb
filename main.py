@@ -73,9 +73,8 @@ def load_config():
         "AVAILABILITY_CHECK_API": "https://api.check.proxyip.cmliussss.net/check",
         "AVAILABILITY_TIMEOUT": 5,
         "AVAILABILITY_CONNECT_TIMEOUT": 5,
-        "AVAILABILITY_RETRY_MAX": 1,
+        "AVAILABILITY_RETRY_MAX": 2,
         "AVAILABILITY_RETRY_DELAY": 5,
-        "AVAILABILITY_PROBES": 3,
         "FILTER_IPV6_AVAILABILITY": True,
         "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
         "BLOCKED_COUNTRIES": [
@@ -146,7 +145,6 @@ AVAILABILITY_TIMEOUT = cfg["AVAILABILITY_TIMEOUT"]
 AVAILABILITY_CONNECT_TIMEOUT = cfg["AVAILABILITY_CONNECT_TIMEOUT"]
 AVAILABILITY_RETRY_MAX = cfg["AVAILABILITY_RETRY_MAX"]
 AVAILABILITY_RETRY_DELAY = cfg["AVAILABILITY_RETRY_DELAY"]
-AVAILABILITY_PROBES = cfg["AVAILABILITY_PROBES"]
 FILTER_IPV6_AVAILABILITY = cfg["FILTER_IPV6_AVAILABILITY"]
 FILTER_BLOCKED_COUNTRIES_ENABLED = cfg["FILTER_BLOCKED_COUNTRIES_ENABLED"]
 BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
@@ -258,7 +256,7 @@ def test_node(node_str):
 
 def check_availability(node_str):
     """
-    检测单个节点是否可用（全部探测必须通过才视为可用）。
+    检测单个节点是否可用，并返回协议栈信息。
     返回 (node_str, is_ok, inferred_stack, exit_info)
     """
     m = re.match(r"^(\d+\.\d+\.\d+\.\d+):(\d+)#", node_str)
@@ -267,44 +265,25 @@ def check_availability(node_str):
     ip, port = m.group(1), m.group(2)
     proxyip = f"{ip}:{port}"
 
-    probes = cfg.get("AVAILABILITY_PROBES", 3)
     best_stack = "unknown"
     best_exit_info = {}
-    success = True  # 先假设成功，遇到失败再置 False
+    success = False
 
-    for i in range(probes):
-        probe_ok = False
-        try:
-            resp = requests.get(
-                AVAILABILITY_CHECK_API,
-                params={"proxyip": proxyip},
-                timeout=(AVAILABILITY_CONNECT_TIMEOUT, AVAILABILITY_TIMEOUT)
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("success") is True:
-                    probe_results = data.get("probe_results", {})
-                    v4_ok = probe_results.get("ipv4", {}).get("ok", False)
-                    v6_ok = probe_results.get("ipv6", {}).get("ok", False)
-                    
-                    if v4_ok or v6_ok:
-                        stack = data.get("inferred_stack", "unknown")
-                        if stack != "ipv6_only":
-                            probe_ok = True
-                            # 记录第一次成功的详细信息（用于后续可能的展示）
-                            if i == 0 or best_stack == "unknown":
-                                best_stack = stack
-                                for ver in ("ipv6", "ipv4"):
-                                    probe = probe_results.get(ver, {})
-                                    if probe.get("ok"):
-                                        best_exit_info = probe.get("exit", {})
-                                        break
-        except Exception:
-            pass
-
-        if not probe_ok:
-            success = False
-            break  # 一旦有一次失败，立即淘汰，不再继续探测
+    try:
+        resp = requests.get(
+            AVAILABILITY_CHECK_API,
+            params={"proxyip": proxyip},
+            timeout=(AVAILABILITY_CONNECT_TIMEOUT, AVAILABILITY_TIMEOUT)
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success") is True:
+                success = True
+                best_stack = data.get("inferred_stack", "unknown")
+                probe = data.get("probe_results", {}).get("ipv6") or data.get("probe_results", {}).get("ipv4") or {}
+                best_exit_info = probe.get("exit", {})
+    except Exception:
+        pass
 
     return (node_str, success, best_stack, best_exit_info)
 
@@ -638,7 +617,7 @@ def main():
     mode_str = f"全局最优{GLOBAL_TOP_N}个" if USE_GLOBAL_MODE else f"每个国家最优{PER_COUNTRY_TOP_N}个"
     print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
     print(f"最低成功率要求：{MIN_SUCCESS_RATE*100:.0f}%")
-    print(f"IP 可用性二次筛选：{'启用' if TEST_AVAILABILITY else '禁用'}（每个节点独立探测{AVAILABILITY_PROBES}次，全部通过才可用）")
+    print(f"IP 可用性二次筛选：{'启用' if TEST_AVAILABILITY else '禁用'}（仅对候选节点）")
     print(f"IPv6 客户端 IP 过滤（仅作用于DNS更新环节）：{'启用' if FILTER_IPV6_AVAILABILITY else '禁用'}")
     print(f"屏蔽国家过滤（仅作用于DNS更新环节）：{'启用' if FILTER_BLOCKED_COUNTRIES_ENABLED else '禁用'}，屏蔽国家：{', '.join(BLOCKED_COUNTRIES)}")
     print(f"带宽测速候选数：{BANDWIDTH_CANDIDATES}，测速文件大小：{BANDWIDTH_SIZE_MB} MB，超时：{BANDWIDTH_TIMEOUT}s")
@@ -736,7 +715,6 @@ def main():
                 nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
                 for node_str, _, _ in nodes_sorted[:PER_COUNTRY_TOP_N]:
                     final_selected.append(node_str)
-        dns_bw_results = []
     else:
         if USE_GLOBAL_MODE:
             final_selected = [node for node, _ in bw_results[:GLOBAL_TOP_N]]
@@ -753,7 +731,7 @@ def main():
             speed_map = {node: speed for node, speed in bw_results}
             final_selected.sort(key=lambda x: speed_map.get(x, 0), reverse=True)
 
-        print("\n================ 最终优选节点（基于带宽测速）================")
+        print("\n================ 最终优选节点 ================")
         speed_map = {node: speed for node, speed in bw_results}
         for i, node in enumerate(final_selected, 1):
             speed = speed_map.get(node, 0)
@@ -762,8 +740,6 @@ def main():
                 print(f"{i}. {node} 速度 {speed:.2f} Mbps 延迟 {lat_sec*1000:.2f} ms")
             else:
                 print(f"{i}. {node} 速度 {speed:.2f} Mbps")
-
-        dns_bw_results = bw_results
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for node_str in final_selected:
@@ -778,10 +754,11 @@ def main():
         print(f"读取 {OUTPUT_FILE} 时发生错误: {e}")
 
     target_dns_count = GLOBAL_TOP_N if USE_GLOBAL_MODE else PER_COUNTRY_TOP_N
+    # 直接使用原始带宽测速结果 (bw_results) 进行 DNS 更新，不再经过纯净度过滤
     batch_update_cloudflare_dns(
         ip_list,
         ip_info=avail_ip_info,
-        full_bw_results=dns_bw_results if 'dns_bw_results' in locals() else bw_results,
+        full_bw_results=bw_results,
         target_count=target_dns_count,
         latency_map=latency_map
     )
