@@ -1,14 +1,22 @@
 name: Update Cloudflare IP
 
 on:
+  # 1. 拆分触发器，避免paths-ignore影响定时任务
   schedule:
+    # UTC时间每30分钟运行一次（对应北京时间每30分钟）
     - cron: '*/30 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
+    # 只在非忽略文件变化时触发push运行
     paths-ignore:
       - 'ip.txt'
       - 'README.md'
+
+# 2. 全局配置：给Workflow足够的权限，支持push提交
+permissions:
+  contents: write
+  actions: read
 
 jobs:
   update-ip:
@@ -20,8 +28,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          # 显式开启权限，确保定时任务能push
           persist-credentials: true
           fetch-depth: 0
+          # 用GitHub官方的Action bot身份提交，避免权限问题
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,7 +54,8 @@ jobs:
         run: |
           echo "=========================================="
           echo "Starting Cloudflare IP Optimization..."
-          echo "Time: $(date)"
+          echo "UTC Time: $(date)"
+          echo "Beijing Time: $(date -d '+8 hours')"
           echo "=========================================="
           python main.py
           echo "=========================================="
@@ -79,15 +91,15 @@ jobs:
       - name: Commit and push changes
         if: steps.check_files.outputs.ip_exists == 'true'
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           
           git add ip.txt
           
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "No changes to commit, skipping push"
           else
-            timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+            timestamp=$(date '+%Y-%m-%d %H:%M:%S UTC')
             ip_count=$(wc -l < ip.txt)
             git commit -m "🤖 Auto update IP list ($ip_count IPs) - ${timestamp}"
             
@@ -106,7 +118,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 📊 Execution Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **UTC Time**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Beijing Time**: $(date -d '+8 hours' '+%Y-%m-%d %H:%M:%S CST')" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: main" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
