@@ -10,7 +10,6 @@ on:
     paths-ignore:
       - 'ip.txt'
       - 'README.md'
-      - '.github/workflows/**'
 
 jobs:
   update-ip:
