@@ -1,0 +1,28 @@
+name: Test Schedule
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  test-schedule:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Test Schedule Trigger
+        run: |
+          echo "================================"
+          echo "SCHEDULE TRIGGERED SUCCESSFULLY!"
+          echo "Time: $(date)"
+          echo "Event: ${{ github.event_name }}"
+          echo "================================"
+          
+          echo "This proves schedule works!" > test.txt
+          
+      - name: Upload Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: schedule-proof
+          path: test.txt
+          retention-days: 7
