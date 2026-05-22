@@ -19,6 +19,121 @@ import shutil
 import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
+# ==================== 异步并发框架 ====================
+class AsyncConcurrencyManager:
+    """高性能异步并发管理器 - 支持自动调节并发数"""
+    
+    def __init__(self, min_workers=50, max_workers=150, initial_workers=100,
+                 success_threshold_high=0.7, success_threshold_low=0.3,
+                 adjust_step=10, name="Worker"):
+        self.min_workers = min_workers
+        self.max_workers = max_workers
+        self.current_workers = initial_workers
+        self.success_threshold_high = success_threshold_high
+        self.success_threshold_low = success_threshold_low
+        self.adjust_step = adjust_step
+        self.name = name
+        self.lock = threading.Lock()
+        self.stats = {"total": 0, "success": 0, "failed": 0}
+    
+    def auto_adjust(self):
+        """根据成功率自动调节并发数"""
+        with self.lock:
+            if self.stats["total"] >= 20:
+                success_rate = self.stats["success"] / self.stats["total"]
+                
+                if success_rate > self.success_threshold_high and self.current_workers < self.max_workers:
+                    new_workers = min(self.max_workers, self.current_workers + self.adjust_step)
+                    if new_workers != self.current_workers:
+                        print(f"  [{self.name}] 并发提升: {self.current_workers} -> {new_workers} (成功率: {success_rate:.1%})")
+                        self.current_workers = new_workers
+                        
+                elif success_rate < self.success_threshold_low and self.current_workers > self.min_workers:
+                    new_workers = max(self.min_workers, self.current_workers - self.adjust_step)
+                    if new_workers != self.current_workers:
+                        print(f"  [{self.name}] 并发降低: {self.current_workers} -> {new_workers} (成功率: {success_rate:.1%})")
+                        self.current_workers = new_workers
+                
+                self.stats = {"total": 0, "success": 0, "failed": 0}
+    
+    def record_success(self):
+        with self.lock:
+            self.stats["total"] += 1
+            self.stats["success"] += 1
+    
+    def record_failed(self):
+        with self.lock:
+            self.stats["total"] += 1
+            self.stats["failed"] += 1
+    
+    def execute_batch(self, items, worker_func, timeout=None, 
+                      show_progress=True, progress_interval=10,
+                      description="处理"):
+        """
+        批量执行任务（自动并发+进度显示）
+        
+        参数:
+            items: 待处理项目列表
+            worker_func: 处理函数 (item) -> result
+            timeout: 超时时间
+            show_progress: 是否显示进度
+            progress_interval: 进度更新间隔
+            description: 任务描述
+        
+        返回:
+            results: 结果列表 [(original_item, result), ...]
+        """
+        results = []
+        total = len(items)
+        
+        if total == 0:
+            return results
+        
+        print(f"\n[{self.name}] 开始{description}（共 {total} 个任务，初始并发: {self.current_workers}）...")
+        print("=" * 60)
+        
+        batch_num = 0
+        batch_size = min(200, total)
+        
+        for i in range(0, total, batch_size):
+            batch = items[i:i + batch_size]
+            batch_num += 1
+            
+            with ThreadPoolExecutor(max_workers=self.current_workers) as executor:
+                future_to_item = {
+                    executor.submit(worker_func, item): item 
+                    for item in batch
+                }
+                
+                completed_in_batch = 0
+                for future in as_completed(future_to_item):
+                    original_item = future_to_item[future]
+                    
+                    try:
+                        result = future.result(timeout=timeout)
+                        results.append((original_item, result))
+                        self.record_success()
+                    except Exception as e:
+                        results.append((original_item, None))
+                        self.record_failed()
+                    
+                    completed_in_batch += 1
+                    total_completed = len(results)
+                    
+                    if show_progress and (total_completed % progress_interval == 0 or total_completed == total):
+                        pct = total_completed * 100 // total
+                        print(f"  进度: {total_completed}/{total} ({pct}%) [并发: {self.current_workers}]")
+                
+                self.auto_adjust()
+        
+        success_count = sum(1 for _, r in results if r is not None)
+        print("=" * 60)
+        print(f"[{self.name}] {description}完成！成功: {success_count}/{total}")
+        
+        return results
+
 
 # ==================== 预编译正则 ====================
 NODE_LINE_PATTERN = re.compile(r"^\d+\.\d+\.\d+\.\d+:\d+#[A-Z]{2}$")
@@ -280,34 +395,56 @@ def get_real_location_ipsb(ip, timeout=5):
         pass
     return None
 
-def get_risk_score_iping(ip, timeout=5):
-    """使用iping.cc获取IP风控值和纯净度信息"""
-    try:
-        url = f"https://api.iping.cc/v1/query?ip={ip}&language=zh"
-        resp = requests.get(url, timeout=timeout)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("code") == 200 and data.get("data"):
-                info = data["data"]
-                return {
-                    "risk_score": info.get("risk_score", ""),
-                    "risk_tag": info.get("risk_tag", ""),
-                    "is_proxy": info.get("is_proxy", ""),
-                    "usage_type": info.get("usage_type", ""),
-                    "type": info.get("type", ""),
-                    "continent": info.get("continent", ""),
-                    "country_cn": info.get("country", ""),
-                    "region": info.get("region", ""),
-                    "city": info.get("city", ""),
-                    "isp": info.get("isp", ""),
-                    "asn": info.get("asn", ""),
-                    "as_owner": info.get("as_owner", ""),
-                    "as_type": info.get("as_type", ""),
-                    "company": info.get("company", ""),
-                    "source": "iping"
-                }
-    except Exception as e:
-        pass
+def get_risk_score_iping(ip, timeout=5, max_retries=3):
+    """使用iping.cc获取IP风控值和纯净度信息（带重试机制）"""
+    for attempt in range(max_retries):
+        try:
+            url = f"https://api.iping.cc/v1/query?ip={ip}&language=zh"
+            
+            # 创建session以支持更好的连接管理
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            })
+            
+            resp = session.get(url, timeout=timeout, verify=True)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == 200 and data.get("data"):
+                    info = data["data"]
+                    return {
+                        "risk_score": info.get("risk_score", ""),
+                        "risk_tag": info.get("risk_tag", ""),
+                        "is_proxy": info.get("is_proxy", ""),
+                        "usage_type": info.get("usage_type", ""),
+                        "type": info.get("type", ""),
+                        "continent": info.get("continent", ""),
+                        "country_cn": info.get("country", ""),
+                        "region": info.get("region", ""),
+                        "city": info.get("city", ""),
+                        "isp": info.get("isp", ""),
+                        "asn": info.get("asn", ""),
+                        "as_owner": info.get("as_owner", ""),
+                        "as_type": info.get("as_type", ""),
+                        "company": info.get("company", ""),
+                        "source": "iping"
+                    }
+                    
+        except requests.exceptions.SSLError as e:
+            # SSL错误 - 重试
+            if attempt < max_retries - 1:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+        except requests.exceptions.Timeout:
+            # 超时 - 重试
+            if attempt < max_retries - 1:
+                continue
+        except Exception as e:
+            # 其他错误
+            break
+    
     return None
 
 def get_country_code_from_location(location_text):
@@ -507,37 +644,48 @@ def enrich_node_with_real_info(node, timeout=5):
     
     return new_node, enriched_info
 
-def batch_enrich_nodes(nodes, max_workers=20, timeout=5):
-    """批量处理节点，添加真实地区和风控值"""
+def batch_enrich_nodes(nodes, max_workers=150, timeout=5):
+    """批量处理节点 - 使用高性能异步并发框架（自动调节50-150并发）"""
+    
+    # 创建异步并发管理器
+    manager = AsyncConcurrencyManager(
+        min_workers=50,
+        max_workers=150,
+        initial_workers=min(max_workers, 100),
+        success_threshold_high=0.7,
+        success_threshold_low=0.3,
+        adjust_step=10,
+        name="IP检测"
+    )
+    
+    def enrich_worker(node):
+        """工作线程：处理单个节点"""
+        return enrich_node_with_real_info(node, timeout)
+    
+    # 执行批量任务
+    results = manager.execute_batch(
+        items=nodes,
+        worker_func=enrich_worker,
+        timeout=timeout + 2,
+        show_progress=True,
+        progress_interval=10,
+        description="真实地区与风控值检测"
+    )
+    
+    # 解析结果
     enriched_nodes = []
     nodes_info = {}
     
-    print(f"\n开始真实地区与风控值检测（共 {len(nodes)} 个节点）...")
-    print("=" * 60)
+    for original_node, result in results:
+        if result is not None:
+            new_node, info = result
+            enriched_nodes.append(new_node)
+            if info and "error" not in info:
+                nodes_info[info["ip"]] = info
+        else:
+            enriched_nodes.append(original_node)
     
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_node = {executor.submit(enrich_node_with_real_info, node, timeout): node 
-                        for node in nodes}
-        
-        completed = 0
-        for future in as_completed(future_to_node):
-            original_node = future_to_node[future]
-            try:
-                new_node, info = future.result()
-                enriched_nodes.append(new_node)
-                if info and "error" not in info:
-                    nodes_info[info["ip"]] = info
-                completed += 1
-                
-                if completed % 10 == 0 or completed == len(nodes):
-                    print(f"  进度: {completed}/{len(nodes)} ({completed*100//len(nodes)}%)")
-                    
-            except Exception as e:
-                enriched_nodes.append(original_node)
-                completed += 1
-    
-    print("=" * 60)
-    print(f"检测完成！成功获取 {len(nodes_info)} 个节点的详细信息\n")
+    print(f"成功获取 {len(nodes_info)} 个节点的详细信息\n")
     
     return enriched_nodes, nodes_info
 
