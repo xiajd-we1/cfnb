@@ -203,6 +203,310 @@ def send_wxpusher_notification(content, summary):
     except Exception as e:
         print(f"[WARN] 微信通知异常: {e}")
 
+# ====================================================
+# 真实地区检测与风控值评估
+# ====================================================
+
+def get_real_location_ping0(ip, timeout=5):
+    """使用ping0.cc获取真实地理位置（免费API）"""
+    try:
+        url = f"https://ping0.cc/geo?ip={ip}"
+        resp = requests.get(url, timeout=timeout)
+        if resp.status_code == 200 and resp.text.strip():
+            parts = resp.text.strip().split(' ', 3)
+            if len(parts) >= 4:
+                location = parts[1] if len(parts) > 1 else ""
+                asn_info = parts[2] if len(parts) > 2 else ""
+                org = parts[3] if len(parts) > 3 else ""
+                return {
+                    "location": location,
+                    "asn": asn_info,
+                    "org": org,
+                    "source": "ping0"
+                }
+    except Exception as e:
+        pass
+    return None
+
+def get_real_location_ipsb(ip, timeout=5):
+    """使用ip.sb API获取真实地理位置（推荐，返回JSON格式）"""
+    try:
+        url = f"https://api.ip.sb/geoip/{ip}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json"
+        }
+        resp = requests.get(url, timeout=timeout, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "ip": data.get("ip", ""),
+                "country_code": data.get("country_code", ""),
+                "country": data.get("country", ""),
+                "region": data.get("region", ""),
+                "city": data.get("city", ""),
+                "organization": data.get("organization", ""),
+                "isp": data.get("isp", ""),
+                "asn": data.get("asn", ""),
+                "asn_organization": data.get("asn_organization", ""),
+                "latitude": data.get("latitude", ""),
+                "longitude": data.get("longitude", ""),
+                "timezone": data.get("timezone", ""),
+                "source": "ipsb"
+            }
+    except Exception as e:
+        pass
+    return None
+
+def get_risk_score_iping(ip, timeout=5):
+    """使用iping.cc获取IP风控值和纯净度信息"""
+    try:
+        url = f"https://api.iping.cc/v1/query?ip={ip}&language=zh"
+        resp = requests.get(url, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("code") == 200 and data.get("data"):
+                info = data["data"]
+                return {
+                    "risk_score": info.get("risk_score", ""),
+                    "risk_tag": info.get("risk_tag", ""),
+                    "is_proxy": info.get("is_proxy", ""),
+                    "usage_type": info.get("usage_type", ""),
+                    "type": info.get("type", ""),
+                    "continent": info.get("continent", ""),
+                    "country_cn": info.get("country", ""),
+                    "region": info.get("region", ""),
+                    "city": info.get("city", ""),
+                    "isp": info.get("isp", ""),
+                    "asn": info.get("asn", ""),
+                    "as_owner": info.get("as_owner", ""),
+                    "as_type": info.get("as_type", ""),
+                    "company": info.get("company", ""),
+                    "source": "iping"
+                }
+    except Exception as e:
+        pass
+    return None
+
+def get_country_code_from_location(location_text):
+    """从位置文本中提取国家代码"""
+    if not location_text:
+        return "UNKNOWN"
+    
+    country_mapping = {
+        "美国": "US", "日本": "JP", "韩国": "KR", "香港": "HK", 
+        "台湾": "TW", "新加坡": "SG", "英国": "GB", "德国": "DE",
+        "法国": "FR", "加拿大": "CA", "澳大利亚": "AU", "巴西": "BR",
+        "印度": "IN", "俄罗斯": "RU", "荷兰": "NL", "芬兰": "FI",
+        "瑞典": "SE", "挪威": "NO", "丹麦": "DK", "瑞士": "CH",
+        "奥地利": "AT", "比利时": "BE", "西班牙": "ES", "葡萄牙": "PT",
+        "意大利": "IT", "波兰": "PL", "捷克": "CZ", "匈牙利": "HU",
+        "罗马尼亚": "RO", "保加利亚": "BG", "希腊": "GR", "土耳其": "TR",
+        "以色列": "IL", "阿联酋": "AE", "沙特阿拉伯": "SA", "泰国": "TH",
+        "越南": "VN", "马来西亚": "MY", "印度尼西亚": "ID", "菲律宾": "PH",
+        "阿根廷": "AR", "智利": "CL", "墨西哥": "MX", "南非": "ZA",
+        "埃及": "EG", "尼日利亚": "NG", "肯尼亚": "KE", "中国": "CN"
+    }
+    
+    for cn_name, code in country_mapping.items():
+        if cn_name in location_text:
+            return code
+    
+    return "UNKNOWN"
+
+def calculate_risk_score(location_info, ip):
+    """基于IP信息计算风控值（0-100，越低越好）"""
+    risk_score = 0
+    risk_factors = []
+    
+    if not location_info:
+        return 50, ["无法获取位置信息"]
+    
+    org = location_info.get("org", "").lower()
+    asn = location_info.get("asn", "").lower()
+    location = location_info.get("location", "")
+    
+    # IDC/数据中心检测
+    idc_keywords = ["amazon", "google", "microsoft", "azure", "digitalocean", 
+                   "linode", "vultr", "ovh", "cloudflare", "alibaba", "tencent",
+                   "huawei", "oracle", "ec2", "data center", "idc", "hosting",
+                   "server", "cloud"]
+    for keyword in idc_keywords:
+        if keyword in org or keyword in asn:
+            risk_score += 25
+            risk_factors.append(f"数据中心({keyword})")
+            break
+    
+    # 云服务提供商
+    cloud_providers = ["aws", "amazon web", "google cloud", "microsoft azure",
+                      "alibaba cloud", "tencent cloud", "oracle cloud"]
+    for provider in cloud_providers:
+        if provider in org:
+            risk_score += 15
+            risk_factors.append(f"云服务商({provider})")
+            break
+    
+    # VPN/代理特征
+    vpn_keywords = ["vpn", "proxy", "tor", "exit node", "anonymous"]
+    for keyword in vpn_keywords:
+        if keyword in org or keyword in asn:
+            risk_score += 30
+            risk_factors.append(f"VPN/代理特征({keyword})")
+            break
+    
+    # 已知高风险ASN
+    high_risk_asn = ["as13335"]  # Cloudflare
+    for ra in high_risk_asn:
+        if ra in asn:
+            risk_score += 10
+            risk_factors.append(f"高风险ASN({ra})")
+    
+    # 限制最高分为100
+    risk_score = min(risk_score, 100)
+    
+    if not risk_factors:
+        risk_factors.append("正常")
+    
+    return risk_score, risk_factors
+
+def enrich_node_with_real_info(node, timeout=5):
+    """为节点添加真实地区和风控值信息（优先使用iping.cc）"""
+    m = NODE_PATTERN.match(node)
+    if not m:
+        return node, {}
+    
+    ip = m.group(1)
+    port = m.group(2)
+    
+    # 1. 优先使用iping.cc获取风控值和中文位置信息
+    iping_info = get_risk_score_iping(ip, timeout)
+    
+    # 2. 使用ip.sb获取准确的国家代码（备用）
+    ipsb_info = get_real_location_ipsb(ip, timeout)
+    
+    # 3. 如果都失败，使用ping0作为后备
+    if not ipsb_info and not ipsb_info:
+        ping0_info = get_real_location_ping0(ip, timeout)
+        if ping0_info:
+            country_code = get_country_code_from_location(ping0_info.get("location", ""))
+            ipsb_info = {
+                "country_code": country_code,
+                "country": ping0_info.get("location", "").split(' ')[0] if ping0_info.get("location") else "",
+                "organization": ping0_info.get("org", ""),
+                "asn": ping0_info.get("asn", ""),
+                "source": "ping0"
+            }
+    
+    if not ipsb_info and not iping_info:
+        return node, {"error": "无法获取位置信息"}
+    
+    # 合并信息 - 优先使用iping.cc的数据
+    country_cn = iping_info.get("country_cn", "") if iping_info else ""
+    country_code = ipsb_info.get("country_code", "") if ipsb_info else ""
+    
+    # 优先使用中文国家名，如果没有则用代码
+    display_country = country_cn if country_cn else (ipsb_info.get("country", "") if ipsb_info else country_code)
+    
+    # 获取风控值（主要来自iping.cc）
+    risk_score_raw = iping_info.get("risk_score", "") if iping_info else ""
+    if isinstance(risk_score_raw, int):
+        risk_score = risk_score_raw
+    elif isinstance(risk_score_raw, str) and risk_score_raw.isdigit():
+        risk_score = int(risk_score_raw)
+    else:
+        risk_score = -1
+    
+    # 获取其他详细信息
+    organization = iping_info.get("company", "") or iping_info.get("isp", "") or (ipsb_info.get("organization", "") if ipsb_info else "")
+    city = iping_info.get("city", "") or (ipsb_info.get("city", "") if ipsb_info else "")
+    region = iping_info.get("region", "") or (ipsb_info.get("region", "") if ipsb_info else "")
+    is_proxy = iping_info.get("is_proxy", "") if iping_info else "未知"
+    usage_type = iping_info.get("usage_type", "") if iping_info else "未知"
+    
+    # 构建真实位置描述
+    real_location_parts = []
+    if country_cn:
+        real_location_parts.append(country_cn)
+    elif country_code:
+        real_location_parts.append(country_code)
+    if region:
+        real_location_parts.append(region)
+    if city:
+        real_location_parts.append(city)
+    real_location = " ".join(real_location_parts) if real_location_parts else (display_country if display_country else "未知")
+    
+    # 风控等级判断
+    if risk_score >= 0:
+        if risk_score <= 15:
+            risk_level = "纯净"
+        elif risk_score <= 30:
+            risk_level = "低"
+        elif risk_score <= 60:
+            risk_level = "中"
+        else:
+            risk_level = "高"
+    else:
+        risk_level = "未知"
+    
+    # 构建详细信息
+    enriched_info = {
+        "ip": ip,
+        "port": port,
+        "real_location": real_location,
+        "country_code": country_code,
+        "country_cn": country_cn,
+        "display_country": display_country,
+        "city": city,
+        "region": region,
+        "organization": organization,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "is_proxy": is_proxy,
+        "usage_type": usage_type,
+        "source_ipsb": ipsb_info.get("source") if ipsb_info else "",
+        "source_iping": iping_info.get("source") if iping_info else ""
+    }
+    
+    # 新格式：IP:端口#真实地区编码或中文名#风控值
+    output_country = country_code if country_code else country_cn
+    new_node = f"{ip}:{port}#{output_country}#{risk_score}"
+    
+    return new_node, enriched_info
+
+def batch_enrich_nodes(nodes, max_workers=20, timeout=5):
+    """批量处理节点，添加真实地区和风控值"""
+    enriched_nodes = []
+    nodes_info = {}
+    
+    print(f"\n开始真实地区与风控值检测（共 {len(nodes)} 个节点）...")
+    print("=" * 60)
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_node = {executor.submit(enrich_node_with_real_info, node, timeout): node 
+                        for node in nodes}
+        
+        completed = 0
+        for future in as_completed(future_to_node):
+            original_node = future_to_node[future]
+            try:
+                new_node, info = future.result()
+                enriched_nodes.append(new_node)
+                if info and "error" not in info:
+                    nodes_info[info["ip"]] = info
+                completed += 1
+                
+                if completed % 10 == 0 or completed == len(nodes):
+                    print(f"  进度: {completed}/{len(nodes)} ({completed*100//len(nodes)}%)")
+                    
+            except Exception as e:
+                enriched_nodes.append(original_node)
+                completed += 1
+    
+    print("=" * 60)
+    print(f"检测完成！成功获取 {len(nodes_info)} 个节点的详细信息\n")
+    
+    return enriched_nodes, nodes_info
+
 def fetch_from_source(source_info):
     """从单个数据源获取节点，支持多种格式"""
     url = source_info.get("url")
@@ -890,18 +1194,43 @@ def main():
         
         final_selected = final_unique
         
+        # 真实地区检测与风控值评估
+        print("\n[INFO] 开始真实地区与风控值检测...")
+        final_selected, nodes_real_info = batch_enrich_nodes(
+            final_selected, 
+            max_workers=min(20, len(final_selected)),
+            timeout=5
+        )
+        
+        print("\n================ 最终优选节点（含真实信息）=")
+        speed_map = {node: speed for node, speed in bw_results}
+        
         for i, node in enumerate(final_selected, 1):
-            speed = speed_map.get(node, 0)
+            speed = speed_map.get(node.split('#')[0] + '#' + node.split('#')[1] if '#' in node else node, 0)
             lat_sec = latency_map.get(node, float('inf'))
+            
+            # 解析新格式：IP:端口#国家#风控值
+            parts = node.split('#') if '#' in node else [node]
+            ip_port = parts[0] if parts else node
+            country = parts[1] if len(parts) > 1 else "??"
+            risk_score = parts[2] if len(parts) > 2 else "??"
+            
+            # 获取详细信息
+            ip = ip_port.split(':')[0] if ':' in ip_port else ip_port
+            info = nodes_real_info.get(ip, {})
+            real_location = info.get("real_location", "未知")
+            risk_level = info.get("risk_level", "未知")
+            
             if lat_sec != float('inf'):
-                print(f"{i}. {node} 速度 {speed:.2f} Mbps 延迟 {lat_sec*1000:.2f} ms")
+                print(f"{i}. {ip_port} #{country} 风控:{risk_score}({risk_level}) 速度 {speed:.2f} Mbps 延迟 {lat_sec*1000:.2f} ms [{real_location}]")
             else:
-                print(f"{i}. {node} 速度 {speed:.2f} Mbps")
+                print(f"{i}. {ip_port} #{country} 风控:{risk_score}({risk_level}) 速度 {speed:.2f} Mbps [{real_location}]")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for node_str in final_selected:
             f.write(node_str + "\n")
-    print(f"\n结果已保存到 {OUTPUT_FILE}（共 {len(final_selected)} 个唯一IP节点）")
+    print(f"\n[OK] 结果已保存到 {OUTPUT_FILE}（共 {len(final_selected)} 个节点，含真实地区和风控值）")
+    print(f"   格式：IP:端口#国家代码#风控值（0-100，越低越纯净）")
 
     ip_list = []
     try:
