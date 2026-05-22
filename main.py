@@ -784,8 +784,8 @@ def test_tcp_connection(ip, port, timeout=None):
     except Exception as e:
         return False, None
 
-def test_tcp_connection_with_retry(ip, port, max_retries=2, timeout=None):
-    """带重试机制的TCP连接测试"""
+def test_tcp_connection_with_retry(ip, port, max_retries=3, timeout=None):
+    """带重试机制的TCP连接测试（GitHub Actions优化版）"""
     for attempt in range(max_retries + 1):
         success, latency = test_tcp_connection(ip, port, timeout)
         
@@ -794,7 +794,7 @@ def test_tcp_connection_with_retry(ip, port, max_retries=2, timeout=None):
         
         # 如果不是最后一次，等待后重试
         if attempt < max_retries:
-            time.sleep(0.1)  # 短暂等待100ms
+            time.sleep(0.2)  # 等待200ms再重试
     
     return False, None
 
@@ -1208,8 +1208,8 @@ def main():
     total_nodes = len(nodes)
     tested = 0
     
-    # 优化：降低并发数，增加成功率
-    tcp_workers = min(config.get("MAX_WORKERS", 300), 100)  # 最大100并发
+    # 优化：降低并发数到50，确保GitHub Actions稳定性
+    tcp_workers = min(config.get("MAX_WORKERS", 300), 50)  # 最大50并发
     
     print(f"\n开始TCP连接测试（共 {total_nodes} 个节点，并发数: {tcp_workers}）...")
     print("-" * 60)
@@ -1243,22 +1243,14 @@ def main():
     print("-" * 60)
     print(f"TCP测试完成！可用节点: {len(tcp_test_results)}/{total_nodes}\n")
     
-    # 检测是否为受限环境（GitHub Actions等）
-    restricted_environment = False
     if not tcp_test_results:
         success_rate = len(tcp_test_results) / total_nodes if total_nodes > 0 else 0
         
         if success_rate < 0.01:
             print("⚠ TCP连接测试全部失败")
             print(f"  原因可能是：网络限制、端口不通、或超时时间过短\n")
-            print("⚙️ 自动切换到【受限环境模式】：")
-            print("   ✅ 跳过带宽测试（无法建立TCP连接）")
-            print("   ✅ 仅执行地区与纯净度检测（API调用）")
-            print("   ✅ 直接输出格式化结果\n")
+            print("⚙️ 继续使用原始节点进行后续检测（包含带宽测试）\n")
             
-            restricted_environment = True
-            
-            # 直接使用原始节点，跳过TCP排序和带宽测试
             candidates = [(node, float('inf')) for node in nodes[:config.get("BANDWIDTH_CANDIDATES", 1000)]]
         else:
             print("✗ 所有节点均不可达，程序退出")
@@ -1305,48 +1297,17 @@ def main():
         
         print(f"已更新 {len(enriched_dict)} 个节点的真实地区和风控值\n")
     
-    # 受限环境模式：跳过带宽测试，直接输出结果
-    if restricted_environment:
-        print("=" * 70)
-        print("📋 受限环境模式 - 直接输出检测结果（跳过带宽测试）")
-        print("=" * 70)
-        
-        best_nodes = candidates[:config.get("GLOBAL_TOP_N", 300)]
-        
-        output_lines = []
-        for idx, (node, _) in enumerate(best_nodes, 1):
-            output_lines.append(node)
-        
-        output_file = config.get("OUTPUT_FILE", "ip.txt")
-        
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(output_lines) + '\n')
-        
-        print(f"\n✅ 已完成！共输出 {len(output_lines)} 个节点")
-        print(f"   输出文件: {output_file}")
-        print(f"   格式: ip:端口#真实地区#纯净度\n")
-        
-        if output_lines:
-            print(f'前10个样本:')
-            for i, line in enumerate(output_lines[:10], 1):
-                print(f'  [{i}] {line}')
-        
-        elapsed_time = time.time() - start_time
-        print(f"\n⏱️ 总耗时: {elapsed_time:.1f}秒")
-        print('=' * 70)
-        return
-    
     print("=" * 70)
     print("阶段3: 带宽测试（异步并发 + 自动调节）")
     print("=" * 70)
     
     bandwidth_manager = AsyncConcurrencyManager(
-        min_workers=config.get("BANDWIDTH_WORKERS_MIN", 50),
-        max_workers=config.get("BANDWIDTH_WORKERS_MAX", 150),
-        initial_workers=config.get("BANDWIDTH_WORKERS", 100),
+        min_workers=config.get("BANDWIDTH_WORKERS_MIN", 30),
+        max_workers=config.get("BANDWIDTH_WORKERS_MAX", 80),
+        initial_workers=config.get("BANDWIDTH_WORKERS", 50),
         success_threshold_high=0.85,
         success_threshold_low=0.4,
-        adjust_step=15,
+        adjust_step=10,
         name="带宽测试"
     )
     
