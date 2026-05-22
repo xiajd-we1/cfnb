@@ -231,29 +231,27 @@ def test_tcp_with_retry(ip, port, max_retries=3, timeout=10):
 
 # ========== 带宽测试函数（参考原项目）==========
 
-def measure_bandwidth_curl(ip, port=443, timeout=8, size_mb=0.5):
+def measure_bandwidth_curl(ip, port=443, timeout=12, size_mb=0.1):
     """使用curl测量带宽（参考原项目实现）"""
+    import sys
+    import os
+
     null_device = "NUL" if sys.platform == "win32" else "/dev/null"
     
     bytes_to_download = int(size_mb * 1024 * 1024)
     bandwidth_url = f"https://speed.cloudflare.com/__down?bytes={bytes_to_download}"
     
-    curl_cmd = [
-        "curl", "-s", "-o", null_device,
-        "-w", "%{size_download} %{time_total}",
-        "--resolve", f"speed.cloudflare.com:{port}:{ip}",
-        "--connect-timeout", str(min(timeout, 5)),
-        "--max-time", str(timeout),
-        "--insecure",
-        bandwidth_url
-    ]
+    # 使用字符串形式的命令（与诊断脚本一致）
+    curl_cmd = f'curl -s -o {null_device} -w "%{{size_download}} %{{time_total}}" --resolve "speed.cloudflare.com:{port}:{ip}" --connect-timeout 5 --max-time {timeout} --insecure "{bandwidth_url}"'
 
     try:
         result = subprocess.run(
-            curl_cmd, 
-            capture_output=True, 
-            text=True, 
-            timeout=timeout + 2
+            curl_cmd,
+            shell=True,  # 使用shell模式（与诊断脚本一致）
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2,
+            env=os.environ
         )
         
         if result.returncode == 0 and result.stdout.strip():
@@ -263,11 +261,23 @@ def measure_bandwidth_curl(ip, port=443, timeout=8, size_mb=0.5):
                 time_total = float(parts[1])
                 
                 if time_total > 0 and size_bytes > 0:
-                    # 计算Mbps： (bytes * 8) / (seconds * 1000000)
                     speed_mbps = (size_bytes * 8) / (time_total * 1000 * 1000)
                     return speed_mbps
-    except Exception:
+        
+        # 调试：记录失败原因（仅首次失败时记录）
+        if not hasattr(measure_bandwidth_curl, '_error_logged'):
+            measure_bandwidth_curl._error_logged = True
+            print(f"   [DEBUG] 首次带宽测试失败详情:")
+            print(f"   IP: {ip}:{port}, returncode: {result.returncode}")
+            print(f"   stdout: '{result.stdout[:100] if result.stdout else 'empty'}'")
+            print(f"   stderr: '{result.stderr[:200] if result.stderr else 'empty'}")
+        
+    except subprocess.TimeoutExpired:
         pass
+    except Exception as e:
+        if not hasattr(measure_bandwidth_curl, '_exc_logged'):
+            measure_bandwidth_curl._exc_logged = True
+            print(f"   [DEBUG] 带宽测试异常: {str(e)[:100]}")
     
     return 0
 
