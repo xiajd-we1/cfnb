@@ -480,24 +480,28 @@ def main():
         print(f"✅ 使用TCP延迟排序，选择前 {len(candidates)} 个节点\n")
     else:
         # 对所有TCP成功的节点进行带宽测试
-        bw_timeout = config.get("BANDWIDTH_TIMEOUT", 8)
-        bw_size_mb = config.get("BANDWIDTH_SIZE_MB", 0.5)
+        bw_timeout = config.get("BANDWIDTH_TIMEOUT", 12)
+        bw_size_mb = config.get("BANDWIDTH_SIZE_MB", 0.1)
         
-        if len(tcp_results) > 3000:
-            bw_workers = 30
-        elif len(tcp_results) > 1000:
-            bw_workers = 20
+        # 优化：限制带宽测试数量（GitHub Actions环境优化）
+        MAX_BW_TEST = 3000  # 最多测试3000个IP的带宽
+        bw_test_nodes = tcp_results[:MAX_BW_TEST] if len(tcp_results) > MAX_BW_TEST else tcp_results
+        
+        if len(bw_test_nodes) > 2000:
+            bw_workers = 15  # 降低并发数
+        elif len(bw_test_nodes) > 1000:
+            bw_workers = 12
         else:
-            bw_workers = 15
+            bw_workers = 10
 
-        print(f"\n待测节点: {len(tcp_results)} | 并发: {bw_workers} | 超时: {bw_timeout}s | 文件大小: {bw_size_mb}MB\n")
+        print(f"\n待测节点: {len(bw_test_nodes)}/{len(tcp_results)} (限制{MAX_BW_TEST}个) | 并发: {bw_workers} | 超时: {bw_timeout}s | 文件大小: {bw_size_mb}MB\n")
 
         bw_results = []
         t2 = time.time()
 
         with ThreadPoolExecutor(max_workers=bw_workers) as executor:
             futures = {}
-            for node, latency in tcp_results:
+            for node, latency in bw_test_nodes:  # 使用限制后的列表
                 m = NODE_PATTERN.match(node)
                 if m:
                     ip = m.group(1)
