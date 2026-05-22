@@ -228,6 +228,28 @@ def get_real_location_ping0(ip, timeout=5):
         pass
     return None
 
+def get_real_location_ipinfo(ip, timeout=5, token="1a131396211828"):
+    """使用IPinfo.io Lite API获取真实地理位置（免费无限请求，推荐首选）"""
+    try:
+        url = f"https://api.ipinfo.io/lite/{ip}?token={token}"
+        resp = requests.get(url, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "ip": data.get("ip", ""),
+                "country_code": data.get("country_code", ""),
+                "country": data.get("country", ""),
+                "continent_code": data.get("continent_code", ""),
+                "continent": data.get("continent", ""),
+                "asn": data.get("asn", ""),
+                "as_name": data.get("as_name", ""),
+                "as_domain": data.get("as_domain", ""),
+                "source": "ipinfo"
+            }
+    except Exception as e:
+        pass
+    return None
+
 def get_real_location_ipsb(ip, timeout=5):
     """使用ip.sb API获取真实地理位置（推荐，返回JSON格式）"""
     try:
@@ -370,7 +392,7 @@ def calculate_risk_score(location_info, ip):
     return risk_score, risk_factors
 
 def enrich_node_with_real_info(node, timeout=5):
-    """为节点添加真实地区和风控值信息（优先使用iping.cc）"""
+    """为节点添加真实地区和风控值信息（优先使用ipinfo.io + iping.cc）"""
     m = NODE_PATTERN.match(node)
     if not m:
         return node, {}
@@ -378,34 +400,40 @@ def enrich_node_with_real_info(node, timeout=5):
     ip = m.group(1)
     port = m.group(2)
     
-    # 1. 优先使用iping.cc获取风控值和中文位置信息
+    # 1. 优先使用IPinfo.io获取准确国家代码（免费无限请求）
+    ipinfo_data = get_real_location_ipinfo(ip, timeout)
+    
+    # 2. 使用iping.cc获取风控值和中文位置信息
     iping_info = get_risk_score_iping(ip, timeout)
     
-    # 2. 使用ip.sb获取准确的国家代码（备用）
+    # 3. 使用ip.sb作为备用（带User-Agent）
     ipsb_info = get_real_location_ipsb(ip, timeout)
     
-    # 3. 如果都失败，使用ping0作为后备
-    if not ipsb_info and not ipsb_info:
+    # 4. 如果都失败，使用ping0作为后备
+    if not ipinfo_data and not ipsb_info and not iping_info:
         ping0_info = get_real_location_ping0(ip, timeout)
         if ping0_info:
             country_code = get_country_code_from_location(ping0_info.get("location", ""))
-            ipsb_info = {
+            ipinfo_data = {
                 "country_code": country_code,
                 "country": ping0_info.get("location", "").split(' ')[0] if ping0_info.get("location") else "",
-                "organization": ping0_info.get("org", ""),
                 "asn": ping0_info.get("asn", ""),
+                "as_name": ping0_info.get("org", ""),
                 "source": "ping0"
             }
     
-    if not ipsb_info and not iping_info:
+    if not ipinfo_data and not ipsb_info and not iping_info:
         return node, {"error": "无法获取位置信息"}
     
-    # 合并信息 - 优先使用iping.cc的数据
-    country_cn = iping_info.get("country_cn", "") if iping_info else ""
-    country_code = ipsb_info.get("country_code", "") if ipsb_info else ""
+    # 合并信息 - 优先使用IPinfo的数据（最准确）
+    country_code = ipinfo_data.get("country_code", "") if ipinfo_data else ""
+    country_en = ipinfo_data.get("country", "") if ipinfo_data else ""
     
-    # 优先使用中文国家名，如果没有则用代码
-    display_country = country_cn if country_cn else (ipsb_info.get("country", "") if ipsb_info else country_code)
+    # 从iping.cc获取中文国家名
+    country_cn = iping_info.get("country_cn", "") if iping_info else ""
+    
+    # 优先使用中文国家名，如果没有则用英文或代码
+    display_country = country_cn if country_cn else (country_en if country_en else country_code)
     
     # 获取风控值（主要来自iping.cc）
     risk_score_raw = iping_info.get("risk_score", "") if iping_info else ""
@@ -417,6 +445,7 @@ def enrich_node_with_real_info(node, timeout=5):
         risk_score = -1
     
     # 获取其他详细信息
+    as_name = ipinfo_data.get("as_name", "") or (ipsb_info.get("organization", "") if ipsb_info else "")
     organization = iping_info.get("company", "") or iping_info.get("isp", "") or (ipsb_info.get("organization", "") if ipsb_info else "")
     city = iping_info.get("city", "") or (ipsb_info.get("city", "") if ipsb_info else "")
     region = iping_info.get("region", "") or (ipsb_info.get("region", "") if ipsb_info else "")
@@ -427,6 +456,8 @@ def enrich_node_with_real_info(node, timeout=5):
     real_location_parts = []
     if country_cn:
         real_location_parts.append(country_cn)
+    elif country_en:
+        real_location_parts.append(country_en)
     elif country_code:
         real_location_parts.append(country_code)
     if region:
@@ -454,15 +485,18 @@ def enrich_node_with_real_info(node, timeout=5):
         "port": port,
         "real_location": real_location,
         "country_code": country_code,
+        "country_en": country_en,
         "country_cn": country_cn,
         "display_country": display_country,
         "city": city,
         "region": region,
         "organization": organization,
+        "as_name": as_name,
         "risk_score": risk_score,
         "risk_level": risk_level,
         "is_proxy": is_proxy,
         "usage_type": usage_type,
+        "source_ipinfo": ipinfo_data.get("source") if ipinfo_data else "",
         "source_ipsb": ipsb_info.get("source") if ipsb_info else "",
         "source_iping": iping_info.get("source") if iping_info else ""
     }
