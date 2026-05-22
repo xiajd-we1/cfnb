@@ -1,27 +1,135 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + curl带宽测速 + WxPusher通知)
-依赖：requests, curl (系统自带)
-配置文件：同目录下的 config.json（请根据需要修改参数）
-结果保存到 ip.txt，并自动推送到 GitHub，同时批量更新到 Cloudflare DNS
-支持 Windows / Linux
-优化：国家过滤前置，减少无效 TCP 测试；重试参数可配置；所有网络请求连接超时分离
+Cloudflare IP优选工具 - 增强版
+功能：自动获取IP列表、测试可用性、测速、筛选最优IP、更新DNS
+新增：真实地区检测（IPinfo.io + iping.cc）+ 风控值评估 + 异步并发框架
 """
 
 import requests
 import socket
-import time
-import sys
-import re
-import os
-import subprocess
-import shutil
 import json
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import re
+import random
+import subprocess
+import sys
+import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
-# ==================== 异步并发框架 ====================
+# 配置文件路径
+CONFIG_FILE = "config.json"
+
+def load_config():
+    """加载配置文件"""
+    default_config = {
+        "USE_GLOBAL_MODE": True,
+        "GLOBAL_TOP_N": 300,
+        "PER_COUNTRY_TOP_N": 10,
+        "BANDWIDTH_CANDIDATES": 1000,
+        "TCP_PROBES": 3,
+        "MIN_SUCCESS_RATE": 0.9,
+        "TIMEOUT": 2.5,
+        "SOCKET_DEFAULT_TIMEOUT": 3,
+        "PROGRESS_PRINT_INTERVAL": 1,
+        "FILTER_COUNTRIES_ENABLED": False,
+        "ALLOWED_COUNTRIES": ["US"],
+        "ENABLE_WXPUSHER": False,
+        "WXPUSHER_APP_TOKEN": "your_app_token_here",
+        "WXPUSHER_UIDS": ["your_uid_here"],
+        "WXPUSHER_API_URL": "http://wxpusher.zjiecode.com/api/send/message",
+        "NOTIFY_TIMEOUT": 3,
+        "NOTIFY_CONNECT_TIMEOUT": 3,
+        "CF_ENABLED": False,
+        "CF_API_TOKEN": "your_CF_API_TOKEN",
+        "CF_ZONE_ID": "your_CF_ZONE_ID",
+        "CF_DNS_RECORD_NAME": "your_CF_DNS_RECORD_NAME",
+        "CF_TTL": 60,
+        "CF_PROXIED": False,
+        "CF_DNS_CONNECT_TIMEOUT": 3,
+        "CF_DNS_READ_TIMEOUT": 3,
+        "JSON_URL": "https://zip.cm.edu.kg/all.txt",
+        "FETCH_MAX_RETRIES": 3,
+        "FETCH_RETRY_DELAY": 3,
+        "FETCH_TIMEOUT": 10,
+        "FETCH_CONNECT_TIMEOUT": 5,
+        "OUTPUT_FILE": "ip.txt",
+        "TEST_AVAILABILITY": False,
+        "AVAILABILITY_CHECK_API": "https://api.check.proxyip.cmliussss.net/check",
+        "AVAILABILITY_TIMEOUT": 3,
+        "AVAILABILITY_CONNECT_TIMEOUT": 3,
+        "AVAILABILITY_RETRY_MAX": 2,
+        "AVAILABILITY_RETRY_DELAY": 3,
+        "FILTER_IPV6_AVAILABILITY": False,
+        "FILTER_BLOCKED_COUNTRIES_ENABLED": False,
+        "BLOCKED_COUNTRIES": [],
+        "DNS_UPDATE_TARGET_COUNT": 15,
+        "BANDWIDTH_SIZE_MB": 2.0,
+        "BANDWIDTH_TIMEOUT": 8,
+        "BANDWIDTH_RETRY_MAX": 2,
+        "BANDWIDTH_RETRY_DELAY": 3,
+        "BANDWIDTH_URL_TEMPLATE": "https://speed.cloudflare.com/__down?bytes={bytes}",
+        "BANDWIDTH_PROCESS_BUFFER": 2,
+        "BANDWIDTH_CONNECT_TIMEOUT": 5,
+        "MAX_WORKERS": 300,
+        "AVAILABILITY_WORKERS": 20,
+        "BANDWIDTH_WORKERS": 100,
+        "BANDWIDTH_WORKERS_MIN": 50,
+        "BANDWIDTH_WORKERS_MAX": 150,
+        "BANDWIDTH_AUTO_ADJUST": True,
+        "DNS_UPDATE_MAX_RETRIES": 3,
+        "DNS_UPDATE_RETRY_DELAY": 3,
+        "GITHUB_SYNC_MAX_RETRIES": 3,
+        "GITHUB_SYNC_RETRY_DELAY": 3,
+        "GIT_SYNC_PROCESS_TIMEOUT": 180,
+        "MIN_BANDWIDTH_MBPS": 2.0,
+        "DATA_SOURCES": [
+            {"url": "https://zip.cm.edu.kg/all.txt", "enabled": True, "name": "主数据源"},
+            {"url": "https://raw.githubusercontent.com/xxzh72/yxym/main/best-domain.txt", "enabled": True, "name": "xxzh72-best-domain"},
+            {"url": "https://raw.githubusercontent.com/xxzh72/yxym/main/ip.txt", "enabled": True, "name": "xxzh72-ip"},
+            {"url": "https://raw.githubusercontent.com/xxzh72/yxym/main/proxyip.txt", "enabled": True, "name": "xxzh72-proxyip"},
+            {"url": "https://raw.githubusercontent.com/AiLee77/proxyip.cczz.eu.cc/main/ip.txt", "enabled": True, "name": "AiLee77-ip"},
+            {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-A", "enabled": True, "name": "KafeMars-CF-A"},
+            {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-B", "enabled": True, "name": "KafeMars-CF-B"},
+            {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/cf-bestips.txt", "enabled": True, "name": "KafeMars-cf-bestips"},
+            {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/HK_IP4", "enabled": True, "name": "KafeMars-HK_IP4"},
+            {"url": "https://raw.githubusercontent.com/chris202010/yxym/main/ip.txt", "enabled": True, "name": "chris202010-ip"},
+            {"url": "https://raw.githubusercontent.com/chris202010/yxym/main/proxyip.txt", "enabled": True, "name": "chris202010-proxyip"},
+            {"url": "https://raw.githubusercontent.com/xgonce/Cloudflare_IP/main/result.csv", "enabled": True, "name": "xgonce-result-csv"},
+            {"url": "https://raw.githubusercontent.com/Wwuyi123/CF-Proxyip/main/proxyip.txt", "enabled": True, "name": "Wwuyi123-proxyip"},
+            {"url": "https://raw.githubusercontent.com/Wwuyi123/CF-Proxyip/main/proxyip_with_country.txt", "enabled": True, "name": "Wwuyi123-proxyip-country"},
+            {"url": "https://raw.githubusercontent.com/hofccyf/myip/main/sg.txt", "enabled": True, "name": "hofccyf-sg"}
+        ],
+        "ENABLE_REAL_LOCATION_DETECT": True,
+        "REAL_LOCATION_TIMEOUT": 5,
+        "REAL_LOCATION_WORKERS": 150,
+        "ENABLE_RISK_SCORE": True,
+        "MAX_RISK_SCORE": 70,
+        "IPINFO_TOKEN": "",
+        "ASYNC_CONCURRENCY_MIN": 50,
+        "ASYNC_CONCURRENCY_MAX": 150,
+        "ASYNC_CONCURRENCY_INITIAL": 100
+    }
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+                default_config.update(user_config)
+                print(f"✓ 已加载配置文件: {CONFIG_FILE}")
+        except Exception as e:
+            print(f"⚠ 配置文件加载失败，使用默认配置: {e}")
+    else:
+        print(f"⚠ 配置文件不存在，使用默认配置")
+    
+    return default_config
+
+config = load_config()
+
+NODE_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+):(\d+)')
+
 class AsyncConcurrencyManager:
     """高性能异步并发管理器 - 支持自动调节并发数"""
     
@@ -37,6 +145,16 @@ class AsyncConcurrencyManager:
         self.name = name
         self.lock = threading.Lock()
         self.stats = {"total": 0, "success": 0, "failed": 0}
+    
+    def record_success(self):
+        with self.lock:
+            self.stats["total"] += 1
+            self.stats["success"] += 1
+    
+    def record_failed(self):
+        with self.lock:
+            self.stats["total"] += 1
+            self.stats["failed"] += 1
     
     def auto_adjust(self):
         """根据成功率自动调节并发数"""
@@ -58,33 +176,10 @@ class AsyncConcurrencyManager:
                 
                 self.stats = {"total": 0, "success": 0, "failed": 0}
     
-    def record_success(self):
-        with self.lock:
-            self.stats["total"] += 1
-            self.stats["success"] += 1
-    
-    def record_failed(self):
-        with self.lock:
-            self.stats["total"] += 1
-            self.stats["failed"] += 1
-    
     def execute_batch(self, items, worker_func, timeout=None, 
                       show_progress=True, progress_interval=10,
                       description="处理"):
-        """
-        批量执行任务（自动并发+进度显示）
-        
-        参数:
-            items: 待处理项目列表
-            worker_func: 处理函数 (item) -> result
-            timeout: 超时时间
-            show_progress: 是否显示进度
-            progress_interval: 进度更新间隔
-            description: 任务描述
-        
-        返回:
-            results: 结果列表 [(original_item, result), ...]
-        """
+        """批量执行任务（自动并发+进度显示）"""
         results = []
         total = len(items)
         
@@ -134,274 +229,44 @@ class AsyncConcurrencyManager:
         
         return results
 
-
-# ==================== 预编译正则 ====================
-NODE_LINE_PATTERN = re.compile(r"^\d+\.\d+\.\d+\.\d+:\d+#[A-Z]{2}$")
-NODE_PATTERN = re.compile(r"^(\d+\.\d+\.\d+\.\d+):(\d+)#(.+)$")
-IP_PORT_PATTERN = re.compile(r"^(\d+\.\d+\.\d+\.\d+):(\d+)#")
-
-# ==================== 加载配置文件 ====================
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-
-def load_config():
-    """加载 config.json 配置文件，缺失必填字段时抛出异常"""
+def get_real_location_ipinfo(ip, timeout=5):
+    """使用IPinfo.io获取真实地理位置（免费API，无需Token也可用）"""
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except FileNotFoundError:
-        print(f"[ERROR] 未找到配置文件 {CONFIG_FILE}")
-        print("请在同目录下创建 config.json 文件，内容参考示例。")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"[ERROR] 配置文件格式不正确 - {e}")
-        sys.exit(1)
-
-    defaults = {
-        "USE_GLOBAL_MODE": True,
-        "GLOBAL_TOP_N": 15,
-        "PER_COUNTRY_TOP_N": 1,
-        "BANDWIDTH_CANDIDATES": 90,
-        "TCP_PROBES": 3,
-        "MIN_SUCCESS_RATE": 1.0,
-        "TIMEOUT": 2.0,
-        "SOCKET_DEFAULT_TIMEOUT": 3,
-        "PROGRESS_PRINT_INTERVAL": 1,
-        "FILTER_COUNTRIES_ENABLED": False,
-        "ALLOWED_COUNTRIES": ["US"],
-        "ENABLE_WXPUSHER": True,
-        "WXPUSHER_APP_TOKEN": "your_app_token_here",
-        "WXPUSHER_UIDS": ["your_uid_here"],
-        "WXPUSHER_API_URL": "http://wxpusher.zjiecode.com/api/send/message",
-        "NOTIFY_TIMEOUT": 3,
-        "NOTIFY_CONNECT_TIMEOUT": 3,
-        "CF_ENABLED": True,
-        "CF_API_TOKEN": "your_CF_API_TOKEN",
-        "CF_ZONE_ID": "your_CF_ZONE_ID",
-        "CF_DNS_RECORD_NAME": "your_CF_DNS_RECORD_NAME",
-        "CF_TTL": 60,
-        "CF_PROXIED": False,
-        "CF_DNS_CONNECT_TIMEOUT": 3,
-        "CF_DNS_READ_TIMEOUT": 3,
-        "JSON_URL": "https://zip.cm.edu.kg/all.txt",
-        "FETCH_MAX_RETRIES": 3,
-        "FETCH_RETRY_DELAY": 3,
-        "FETCH_TIMEOUT": 3,
-        "FETCH_CONNECT_TIMEOUT": 3,
-        "OUTPUT_FILE": "ip.txt",
-        "TEST_AVAILABILITY": True,
-        "AVAILABILITY_CHECK_API": "https://api.check.proxyip.cmliussss.net/check",
-        "AVAILABILITY_TIMEOUT": 3,
-        "AVAILABILITY_CONNECT_TIMEOUT": 3,
-        "AVAILABILITY_RETRY_MAX": 2,
-        "AVAILABILITY_RETRY_DELAY": 3,
-        "FILTER_IPV6_AVAILABILITY": True,
-        "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
-        "BLOCKED_COUNTRIES": [
-            "BD", "BI", "BY", "CD", "CF", "CN", "CU", "DE", "ET", "HK",
-            "IR", "KP", "LY", "MO", "NG", "NL", "PK", "RU", "SD", "SO",
-            "SY", "TH", "TW", "UA", "VE", "VN", "YE", "ZW"
-        ],
-        "DNS_UPDATE_TARGET_COUNT": 15,
-        "BANDWIDTH_SIZE_MB": 0.5,
-        "BANDWIDTH_TIMEOUT": 3,
-        "BANDWIDTH_RETRY_MAX": 2,
-        "BANDWIDTH_RETRY_DELAY": 3,
-        "BANDWIDTH_URL_TEMPLATE": "https://speed.cloudflare.com/__down?bytes={bytes}",
-        "BANDWIDTH_PROCESS_BUFFER": 2,
-        "BANDWIDTH_CONNECT_TIMEOUT": 3,
-        "MAX_WORKERS": 200,
-        "AVAILABILITY_WORKERS": 10,
-        "BANDWIDTH_WORKERS": 10,
-        "DNS_UPDATE_MAX_RETRIES": 3,
-        "DNS_UPDATE_RETRY_DELAY": 3,
-        "GITHUB_SYNC_MAX_RETRIES": 3,
-        "GITHUB_SYNC_RETRY_DELAY": 3,
-        "GIT_SYNC_PROCESS_TIMEOUT": 180,
-        "MIN_BANDWIDTH_MBPS": 1.0,
-    }
-
-    for key, value in defaults.items():
-        if key not in config:
-            config[key] = value
-            print(f"[WARN] 配置项 {key} 未设置，使用默认值：{value}")
-
-    return config
-
-cfg = load_config()
-
-USE_GLOBAL_MODE = cfg["USE_GLOBAL_MODE"]
-GLOBAL_TOP_N = cfg["GLOBAL_TOP_N"]
-PER_COUNTRY_TOP_N = cfg["PER_COUNTRY_TOP_N"]
-BANDWIDTH_CANDIDATES = cfg["BANDWIDTH_CANDIDATES"]
-TCP_PROBES = cfg["TCP_PROBES"]
-MIN_SUCCESS_RATE = cfg["MIN_SUCCESS_RATE"]
-TIMEOUT = cfg["TIMEOUT"]
-SOCKET_DEFAULT_TIMEOUT = cfg["SOCKET_DEFAULT_TIMEOUT"]
-PROGRESS_PRINT_INTERVAL = cfg["PROGRESS_PRINT_INTERVAL"]
-FILTER_COUNTRIES_ENABLED = cfg["FILTER_COUNTRIES_ENABLED"]
-ALLOWED_COUNTRIES = cfg["ALLOWED_COUNTRIES"]
-ENABLE_WXPUSHER = cfg["ENABLE_WXPUSHER"]
-WXPUSHER_APP_TOKEN = cfg["WXPUSHER_APP_TOKEN"]
-WXPUSHER_UIDS = cfg["WXPUSHER_UIDS"]
-WXPUSHER_API_URL = cfg["WXPUSHER_API_URL"]
-NOTIFY_TIMEOUT = cfg["NOTIFY_TIMEOUT"]
-NOTIFY_CONNECT_TIMEOUT = cfg["NOTIFY_CONNECT_TIMEOUT"]
-CF_ENABLED = cfg["CF_ENABLED"]
-CF_API_TOKEN = cfg["CF_API_TOKEN"]
-CF_ZONE_ID = cfg["CF_ZONE_ID"]
-CF_DNS_RECORD_NAME = cfg["CF_DNS_RECORD_NAME"]
-CF_TTL = cfg["CF_TTL"]
-CF_PROXIED = cfg["CF_PROXIED"]
-CF_DNS_CONNECT_TIMEOUT = cfg["CF_DNS_CONNECT_TIMEOUT"]
-CF_DNS_READ_TIMEOUT = cfg["CF_DNS_READ_TIMEOUT"]
-JSON_URL = cfg["JSON_URL"]
-FETCH_MAX_RETRIES = cfg["FETCH_MAX_RETRIES"]
-FETCH_RETRY_DELAY = cfg["FETCH_RETRY_DELAY"]
-FETCH_TIMEOUT = cfg["FETCH_TIMEOUT"]
-FETCH_CONNECT_TIMEOUT = cfg["FETCH_CONNECT_TIMEOUT"]
-OUTPUT_FILE = cfg["OUTPUT_FILE"]
-TEST_AVAILABILITY = cfg["TEST_AVAILABILITY"]
-AVAILABILITY_CHECK_API = cfg["AVAILABILITY_CHECK_API"]
-AVAILABILITY_TIMEOUT = cfg["AVAILABILITY_TIMEOUT"]
-AVAILABILITY_CONNECT_TIMEOUT = cfg["AVAILABILITY_CONNECT_TIMEOUT"]
-AVAILABILITY_RETRY_MAX = cfg["AVAILABILITY_RETRY_MAX"]
-AVAILABILITY_RETRY_DELAY = cfg["AVAILABILITY_RETRY_DELAY"]
-FILTER_IPV6_AVAILABILITY = cfg["FILTER_IPV6_AVAILABILITY"]
-FILTER_BLOCKED_COUNTRIES_ENABLED = cfg["FILTER_BLOCKED_COUNTRIES_ENABLED"]
-BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
-DNS_UPDATE_TARGET_COUNT = cfg["DNS_UPDATE_TARGET_COUNT"]
-BANDWIDTH_SIZE_MB = cfg["BANDWIDTH_SIZE_MB"]
-BANDWIDTH_TIMEOUT = cfg["BANDWIDTH_TIMEOUT"]
-BANDWIDTH_RETRY_MAX = cfg["BANDWIDTH_RETRY_MAX"]
-BANDWIDTH_RETRY_DELAY = cfg["BANDWIDTH_RETRY_DELAY"]
-BANDWIDTH_URL_TEMPLATE = cfg["BANDWIDTH_URL_TEMPLATE"]
-BANDWIDTH_PROCESS_BUFFER = cfg["BANDWIDTH_PROCESS_BUFFER"]
-BANDWIDTH_CONNECT_TIMEOUT = cfg["BANDWIDTH_CONNECT_TIMEOUT"]
-MAX_WORKERS = cfg["MAX_WORKERS"]
-AVAILABILITY_WORKERS = cfg["AVAILABILITY_WORKERS"]
-BANDWIDTH_WORKERS = cfg["BANDWIDTH_WORKERS"]
-BANDWIDTH_WORKERS_MIN = cfg.get("BANDWIDTH_WORKERS_MIN", 50)
-BANDWIDTH_WORKERS_MAX = cfg.get("BANDWIDTH_WORKERS_MAX", 150)
-BANDWIDTH_AUTO_ADJUST = cfg.get("BANDWIDTH_AUTO_ADJUST", True)
-DNS_UPDATE_MAX_RETRIES = cfg["DNS_UPDATE_MAX_RETRIES"]
-DNS_UPDATE_RETRY_DELAY = cfg["DNS_UPDATE_RETRY_DELAY"]
-GITHUB_SYNC_MAX_RETRIES = cfg["GITHUB_SYNC_MAX_RETRIES"]
-GITHUB_SYNC_RETRY_DELAY = cfg["GITHUB_SYNC_RETRY_DELAY"]
-GIT_SYNC_PROCESS_TIMEOUT = cfg["GIT_SYNC_PROCESS_TIMEOUT"]
-
-socket.setdefaulttimeout(SOCKET_DEFAULT_TIMEOUT)
-BANDWIDTH_URL = BANDWIDTH_URL_TEMPLATE.format(bytes=int(BANDWIDTH_SIZE_MB * 1024 * 1024))
-
-# ====================================================
-
-def send_wxpusher_notification(content, summary):
-    if not ENABLE_WXPUSHER:
-        return
-    try:
-        payload = {
-            "appToken": WXPUSHER_APP_TOKEN,
-            "content": content,
-            "summary": summary,
-            "uids": WXPUSHER_UIDS
-        }
-        headers = {"Content-Type": "application/json; charset=utf-8"}
-        resp = requests.post(
-            WXPUSHER_API_URL,
-            data=json.dumps(payload),
-            headers=headers,
-            timeout=(NOTIFY_CONNECT_TIMEOUT, NOTIFY_TIMEOUT)
-        )
-        if resp.status_code == 200:
-            print("[OK] 微信通知已发送")
+        token = config.get("IPINFO_TOKEN", "")
+        if token:
+            url = f"https://ipinfo.io/{ip}?token={token}"
         else:
-            print(f"[WARN] 微信通知发送失败: {resp.status_code}")
-    except Exception as e:
-        print(f"[WARN] 微信通知异常: {e}")
-
-# ====================================================
-# 真实地区检测与风控值评估
-# ====================================================
-
-def get_real_location_ping0(ip, timeout=5):
-    """使用ping0.cc获取真实地理位置（免费API）"""
-    try:
-        url = f"https://ping0.cc/geo?ip={ip}"
-        resp = requests.get(url, timeout=timeout)
-        if resp.status_code == 200 and resp.text.strip():
-            parts = resp.text.strip().split(' ', 3)
-            if len(parts) >= 4:
-                location = parts[1] if len(parts) > 1 else ""
-                asn_info = parts[2] if len(parts) > 2 else ""
-                org = parts[3] if len(parts) > 3 else ""
-                return {
-                    "location": location,
-                    "asn": asn_info,
-                    "org": org,
-                    "source": "ping0"
-                }
-    except Exception as e:
-        pass
-    return None
-
-def get_real_location_ipinfo(ip, timeout=5, token="1a131396211828"):
-    """使用IPinfo.io Lite API获取真实地理位置（免费无限请求，推荐首选）"""
-    try:
-        url = f"https://api.ipinfo.io/lite/{ip}?token={token}"
-        resp = requests.get(url, timeout=timeout)
+            url = f"https://ipinfo.io/{ip}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        
         if resp.status_code == 200:
             data = resp.json()
             return {
                 "ip": data.get("ip", ""),
-                "country_code": data.get("country_code", ""),
-                "country": data.get("country", ""),
-                "continent_code": data.get("continent_code", ""),
-                "continent": data.get("continent", ""),
-                "asn": data.get("asn", ""),
-                "as_name": data.get("as_name", ""),
-                "as_domain": data.get("as_domain", ""),
+                "country_code": data.get("country", ""),
+                "country": data.get("country_name") or data.get("country", ""),
+                "region": data.get("region", ""),
+                "city": data.get("city", ""),
+                "org": data.get("org", ""),
+                "asn": data.get("org", "").split()[0] if data.get("org") else "",
+                "as_name": " ".join(data.get("org", "").split()[1:]) if data.get("org") and len(data.get("org", "").split()) > 1 else "",
+                "location": data.get("loc", ""),
                 "source": "ipinfo"
             }
     except Exception as e:
         pass
     return None
 
-def get_real_location_ipsb(ip, timeout=5):
-    """使用ip.sb API获取真实地理位置（推荐，返回JSON格式）"""
-    try:
-        url = f"https://api.ip.sb/geoip/{ip}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json"
-        }
-        resp = requests.get(url, timeout=timeout, headers=headers)
-        if resp.status_code == 200:
-            data = resp.json()
-            return {
-                "ip": data.get("ip", ""),
-                "country_code": data.get("country_code", ""),
-                "country": data.get("country", ""),
-                "region": data.get("region", ""),
-                "city": data.get("city", ""),
-                "organization": data.get("organization", ""),
-                "isp": data.get("isp", ""),
-                "asn": data.get("asn", ""),
-                "asn_organization": data.get("asn_organization", ""),
-                "latitude": data.get("latitude", ""),
-                "longitude": data.get("longitude", ""),
-                "timezone": data.get("timezone", ""),
-                "source": "ipsb"
-            }
-    except Exception as e:
-        pass
-    return None
-
 def get_risk_score_iping(ip, timeout=5, max_retries=3):
-    """使用iping.cc获取IP风控值和纯净度信息（带重试机制）"""
+    """使用iping.cc获取IP风控值和纯净度信息（带重试机制）- 主数据源"""
     for attempt in range(max_retries):
         try:
             url = f"https://api.iping.cc/v1/query?ip={ip}&language=zh"
             
-            # 创建session以支持更好的连接管理
             session = requests.Session()
             session.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -430,97 +295,126 @@ def get_risk_score_iping(ip, timeout=5, max_retries=3):
                         "as_type": info.get("as_type", ""),
                         "company": info.get("company", ""),
                         "source": "iping"
-                    }
+            }
                     
         except requests.exceptions.SSLError as e:
-            # SSL错误 - 重试
             if attempt < max_retries - 1:
                 time.sleep(0.5 * (attempt + 1))
                 continue
         except requests.exceptions.Timeout:
-            # 超时 - 重试
             if attempt < max_retries - 1:
                 continue
         except Exception as e:
-            # 其他错误
             break
     
     return None
 
-def get_country_code_from_location(location_text):
-    """从位置文本中提取国家代码"""
-    if not location_text:
-        return "UNKNOWN"
-    
+def get_real_location_ipsb(ip, timeout=5):
+    """使用ip.sb获取地理位置（备用）"""
+    try:
+        url = f"https://api.ip.sb/geoip/{ip}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "ip": data.get("ip", ""),
+                "country_code": data.get("country_code", ""),
+                "country": data.get("country_name") or data.get("country", ""),
+                "region": data.get("region", "") or data.get("province", ""),
+                "city": data.get("city", ""),
+                "organization": data.get("organization", "") or data.get("asn", {}).get("name", ""),
+                "asn": data.get("asn", {}).get("as_number", "") if isinstance(data.get("asn"), dict) else "",
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "source": "ipsb"
+            }
+    except Exception as e:
+        pass
+    return None
+
+def get_real_location_ping0(ip, timeout=5):
+    """使用ping0.cn获取位置信息（备用）"""
+    try:
+        url = f"https://ping0.cc/api/ip?ip={ip}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("data"):
+                info = data["data"]
+                return {
+                    "ip": info.get("ip", ""),
+                    "location": info.get("location", ""),
+                    "asn": info.get("asnumber", ""),
+                    "org": info.get("asorganization", ""),
+                    "source": "ping0"
+                }
+    except Exception as e:
+        pass
+    return None
+
+def get_country_code_from_location(location_str):
+    """从位置字符串中提取国家代码（备用方法）"""
     country_mapping = {
-        "美国": "US", "日本": "JP", "韩国": "KR", "香港": "HK", 
-        "台湾": "TW", "新加坡": "SG", "英国": "GB", "德国": "DE",
-        "法国": "FR", "加拿大": "CA", "澳大利亚": "AU", "巴西": "BR",
-        "印度": "IN", "俄罗斯": "RU", "荷兰": "NL", "芬兰": "FI",
-        "瑞典": "SE", "挪威": "NO", "丹麦": "DK", "瑞士": "CH",
-        "奥地利": "AT", "比利时": "BE", "西班牙": "ES", "葡萄牙": "PT",
-        "意大利": "IT", "波兰": "PL", "捷克": "CZ", "匈牙利": "HU",
-        "罗马尼亚": "RO", "保加利亚": "BG", "希腊": "GR", "土耳其": "TR",
-        "以色列": "IL", "阿联酋": "AE", "沙特阿拉伯": "SA", "泰国": "TH",
-        "越南": "VN", "马来西亚": "MY", "印度尼西亚": "ID", "菲律宾": "PH",
-        "阿根廷": "AR", "智利": "CL", "墨西哥": "MX", "南非": "ZA",
-        "埃及": "EG", "尼日利亚": "NG", "肯尼亚": "KE", "中国": "CN"
+        "美国": "US", "United States": "US",
+        "加拿大": "CA", "Canada": "CA",
+        "英国": "GB", "United Kingdom": "GB",
+        "德国": "DE", "Germany": "DE",
+        "法国": "FR", "France": "FR",
+        "日本": "JP", "Japan": "JP",
+        "韩国": "KR", "South Korea": "KR",
+        "新加坡": "SG", "Singapore": "SG",
+        "澳大利亚": "AU", "Australia": "AU",
+        "巴西": "BR", "Brazil": "BR",
+        "印度": "IN", "India": "IN",
+        "荷兰": "NL", "Netherlands": "NL",
+        "香港": "HK", "Hong Kong": "HK",
+        "台湾": "TW", "Taiwan": "TW",
+        "俄罗斯": "RU", "Russia": "RU"
     }
     
     for cn_name, code in country_mapping.items():
-        if cn_name in location_text:
+        if cn_name.lower() in location_str.lower():
             return code
     
-    return "UNKNOWN"
+    return ""
 
-def calculate_risk_score(location_info, ip):
-    """基于IP信息计算风控值（0-100，越低越好）"""
+def calculate_composite_risk_score(ip_info):
+    """计算综合风控值（基于多个维度）"""
     risk_score = 0
     risk_factors = []
     
-    if not location_info:
-        return 50, ["无法获取位置信息"]
+    org = ip_info.get("organization", "").lower() or ip_info.get("as_name", "").lower()
     
-    org = location_info.get("org", "").lower()
-    asn = location_info.get("asn", "").lower()
-    location = location_info.get("location", "")
+    high_risk_keywords = ['proxy', 'vpn', 'cloud', 'hosting', 'data center', 'server']
+    medium_risk_keywords = ['digitalocean', 'linode', 'vultr', 'aws', 'google cloud', 'azure', 'oracle', 'alibaba', 'tencent', 'ovh', 'hetzner']
     
-    # IDC/数据中心检测
-    idc_keywords = ["amazon", "google", "microsoft", "azure", "digitalocean", 
-                   "linode", "vultr", "ovh", "cloudflare", "alibaba", "tencent",
-                   "huawei", "oracle", "ec2", "data center", "idc", "hosting",
-                   "server", "cloud"]
-    for keyword in idc_keywords:
-        if keyword in org or keyword in asn:
-            risk_score += 25
-            risk_factors.append(f"数据中心({keyword})")
-            break
-    
-    # 云服务提供商
-    cloud_providers = ["aws", "amazon web", "google cloud", "microsoft azure",
-                      "alibaba cloud", "tencent cloud", "oracle cloud"]
-    for provider in cloud_providers:
-        if provider in org:
+    for keyword in high_risk_keywords:
+        if keyword in org:
             risk_score += 15
-            risk_factors.append(f"云服务商({provider})")
-            break
+            risk_factors.append(f"高风险组织({keyword})")
     
-    # VPN/代理特征
-    vpn_keywords = ["vpn", "proxy", "tor", "exit node", "anonymous"]
-    for keyword in vpn_keywords:
-        if keyword in org or keyword in asn:
-            risk_score += 30
-            risk_factors.append(f"VPN/代理特征({keyword})")
-            break
+    for keyword in medium_risk_keywords:
+        if keyword in org:
+            risk_score += 8
+            risk_factors.append(f"云服务商({keyword})")
     
-    # 已知高风险ASN
-    high_risk_asn = ["as13335"]  # Cloudflare
-    for ra in high_risk_asn:
-        if ra in asn:
-            risk_score += 10
+    ra_list = ['AS13335', 'AS209242', 'AS141289', 'AS141642', 'AS141163']
+    asn = ip_info.get('asn', '')
+    for ra in ra_list:
+        if ra == asn:
+            risk_score += 25
             risk_factors.append(f"高风险ASN({ra})")
     
-    # 限制最高分为100
     risk_score = min(risk_score, 100)
     
     if not risk_factors:
@@ -529,7 +423,7 @@ def calculate_risk_score(location_info, ip):
     return risk_score, risk_factors
 
 def enrich_node_with_real_info(node, timeout=5):
-    """为节点添加真实地区和风控值信息（优先使用ipinfo.io + iping.cc）"""
+    """为节点添加真实地区和风控值信息（以iping.cc为主数据源）"""
     m = NODE_PATTERN.match(node)
     if not m:
         return node, {}
@@ -537,43 +431,85 @@ def enrich_node_with_real_info(node, timeout=5):
     ip = m.group(1)
     port = m.group(2)
     
-    # 1. 优先使用IPinfo.io获取准确国家代码（免费无限请求）
+    # ========== 核心策略：iping.cc作为主要数据源 ==========
+    # 1. 优先使用iping.cc API获取完整信息（位置+风控）
+    iping_info = get_risk_score_iping(ip, timeout=timeout+2, max_retries=3)
+    
+    # 2. 使用IPinfo.io作为备用国家代码验证
     ipinfo_data = get_real_location_ipinfo(ip, timeout)
     
-    # 2. 使用iping.cc获取风控值和中文位置信息
-    iping_info = get_risk_score_iping(ip, timeout)
-    
-    # 3. 使用ip.sb作为备用（带User-Agent）
-    ipsb_info = get_real_location_ipsb(ip, timeout)
-    
-    # 4. 如果都失败，使用ping0作为后备
-    if not ipinfo_data and not ipsb_info and not iping_info:
+    # 3. 如果iping.cc失败，尝试其他备用API
+    if not iping_info:
+        ipsb_info = get_real_location_ipsb(ip, timeout)
         ping0_info = get_real_location_ping0(ip, timeout)
-        if ping0_info:
-            country_code = get_country_code_from_location(ping0_info.get("location", ""))
-            ipinfo_data = {
-                "country_code": country_code,
-                "country": ping0_info.get("location", "").split(' ')[0] if ping0_info.get("location") else "",
+        
+        if ipsb_info:
+            country_code = ipsb_info.get("country_code", "")
+            iping_info = {
+                "ip": ip,
+                "country": ipsb_info.get("country", ""),
+                "country_cn": "",
+                "region": ipsb_info.get("region", ""),
+                "city": ipsb_info.get("city", ""),
+                "isp": "",
+                "is_proxy": "未知",
+                "type": "未知",
+                "usage_type": "未知",
+                "risk_score": -1,
+                "risk_tag": "API失败",
+                "asn": "",
+                "as_owner": ipsb_info.get("organization", ""),
+                "as_type": "",
+                "company": ipsb_info.get("organization", ""),
+                "source": "ipsb_backup"
+            }
+        elif ping0_info:
+            location = ping0_info.get("location", "")
+            country_code = get_country_code_from_location(location)
+            iping_info = {
+                "ip": ip,
+                "country": location.split(' ')[0] if location else "",
+                "country_cn": "",
+                "region": "",
+                "city": "",
+                "isp": "",
+                "is_proxy": "未知",
+                "type": "未知",
+                "usage_type": "未知",
+                "risk_score": -1,
+                "risk_tag": "API失败",
                 "asn": ping0_info.get("asn", ""),
-                "as_name": ping0_info.get("org", ""),
-                "source": "ping0"
+                "as_owner": ping0_info.get("org", ""),
+                "as_type": "",
+                "company": ping0_info.get("org", ""),
+                "source": "ping0_backup"
             }
     
-    if not ipinfo_data and not ipsb_info and not iping_info:
+    if not iping_info:
         return node, {"error": "无法获取位置信息"}
     
-    # 合并信息 - 优先使用IPinfo的数据（最准确）
+    # ========== 提取信息（优先使用iping.cc的中文数据） ==========
+    
+    # 地区信息 - 优先中文
+    country_cn = iping_info.get("country_cn", "") or iping_info.get("country", "")
+    region = iping_info.get("region", "")
+    city = iping_info.get("city", "")
+    
+    # 国家代码（用于备用显示，但最终输出用中文）
     country_code = ipinfo_data.get("country_code", "") if ipinfo_data else ""
-    country_en = ipinfo_data.get("country", "") if ipinfo_data else ""
+    country_en = iping_info.get("country", "") or (ipinfo_data.get("country", "") if ipinfo_data else "")
     
-    # 从iping.cc获取中文国家名
-    country_cn = iping_info.get("country_cn", "") if iping_info else ""
+    # 组织信息
+    as_name = iping_info.get("as_owner", "") or (ipinfo_data.get("as_name", "") if ipinfo_data else "")
+    organization = iping_info.get("company", "") or iping_info.get("isp", "") or as_name
     
-    # 优先使用中文国家名，如果没有则用英文或代码
-    display_country = country_cn if country_cn else (country_en if country_en else country_code)
+    # 风控信息
+    risk_score_raw = iping_info.get("risk_score", -1)
+    is_proxy = iping_info.get("is_proxy", "未知")
+    usage_type = iping_info.get("usage_type", "未知")
+    risk_tag = iping_info.get("risk_tag", "")
     
-    # 获取风控值（主要来自iping.cc）
-    risk_score_raw = iping_info.get("risk_score", "") if iping_info else ""
+    # 解析风控值
     if isinstance(risk_score_raw, int):
         risk_score = risk_score_raw
     elif isinstance(risk_score_raw, str) and risk_score_raw.isdigit():
@@ -581,98 +517,79 @@ def enrich_node_with_real_info(node, timeout=5):
     else:
         risk_score = -1
     
-    # 获取其他详细信息
-    as_name = ipinfo_data.get("as_name", "") or (ipsb_info.get("organization", "") if ipsb_info else "")
-    organization = iping_info.get("company", "") or iping_info.get("isp", "") or (ipsb_info.get("organization", "") if ipsb_info else "")
-    city = iping_info.get("city", "") or (ipsb_info.get("city", "") if ipsb_info else "")
-    region = iping_info.get("region", "") or (ipsb_info.get("region", "") if ipsb_info else "")
-    is_proxy = iping_info.get("is_proxy", "") if iping_info else "未知"
-    usage_type = iping_info.get("usage_type", "") if iping_info else "未知"
-    
-    # 构建真实位置描述
-    real_location_parts = []
+    # 构建中文地区描述（最终输出格式）
+    location_parts = []
     if country_cn:
-        real_location_parts.append(country_cn)
-    elif country_en:
-        real_location_parts.append(country_en)
-    elif country_code:
-        real_location_parts.append(country_code)
+        location_parts.append(country_cn)
     if region:
-        real_location_parts.append(region)
+        location_parts.append(region)
     if city:
-        real_location_parts.append(city)
-    real_location = " ".join(real_location_parts) if real_location_parts else (display_country if display_country else "未知")
+        location_parts.append(city)
     
-    # 风控等级判断 - 参考iping.cc网站标准
-    # 注意：API的risk_score和网站的显示百分比不同
-    # 网站会综合考虑：risk_score + is_proxy + usage_type + risk_tag等
+    location_chinese = " ".join(location_parts) if location_parts else (country_cn or country_en or "未知")
     
-    # 获取风险标签用于辅助判断
-    risk_tag = iping_info.get("risk_tag", "") if iping_info else ""
+    # ========== 综合风控评估（参考iping.cc网站标准） ==========
+    base_risk = risk_score if risk_score >= 0 else 50
     
-    # 综合风控评估逻辑：
-    # 1. 如果是代理/数据中心IP，基础风险较高
-    # 2. 如果有风险标签（如"疑似翻墙服务"），风险等级提升
-    # 3. 最终参考网站显示的百分比范围
-    
-    base_risk = risk_score if risk_score >= 0 else 50  # 默认中等风险
-    
-    # 根据IP类型调整风险值
+    # 加权调整
     if is_proxy == "是":
-        base_risk += 20  # 代理IP增加20分
-    if usage_type == "数据中心":
-        base_risk += 10  # 数据中心IP增加10分
-    if "翻墙" in risk_tag or "代理" in risk_tag or "VPN" in risk_tag.upper():
-        base_risk += 25  # 特殊风险标签增加25分
+        base_risk += 20
+    elif is_proxy == "错误的":
+        base_risk += 0
+        
+    if usage_type == "数据中心" or usage_type == "IDC":
+        base_risk += 10
+        
+    if risk_tag and any(keyword in risk_tag for keyword in ["翻墙", "代理", "VPN"]):
+        base_risk += 25
     
-    # 限制在0-100范围
     adjusted_risk = min(100, max(0, base_risk))
     
-    # 根据调整后的风险值判断等级（参考iping.cc网站标准）
+    # 纯净度等级判断（与iping.cc网站一致）
     if adjusted_risk <= 20:
-        risk_level = "纯净"
+        purity_level = "纯净"
     elif adjusted_risk <= 40:
-        risk_level = "低风险"
+        purity_level = "低风险"
     elif adjusted_risk <= 70:
-        risk_level = "中风险"
+        purity_level = "中风险"
     else:
-        risk_level = "高风险"
+        purity_level = "高风险"
     
-    # 使用调整后的风险值作为显示值
-    final_risk_score = adjusted_risk if (is_proxy == "是" or usage_type == "数据中心") else risk_score
+    # 最终使用的风控值
+    final_risk = adjusted_risk if (is_proxy == "是" or usage_type in ["数据中心", "IDC"]) else risk_score
+    if final_risk < 0:
+        final_risk = adjusted_risk
     
-    # 构建详细信息
+    # 构建详细信息字典
     enriched_info = {
         "ip": ip,
         "port": port,
-        "real_location": real_location,
+        "real_location": location_chinese,
         "country_code": country_code,
         "country_en": country_en,
         "country_cn": country_cn,
-        "display_country": display_country,
+        "display_country": location_chinese,
         "city": city,
         "region": region,
         "organization": organization,
         "as_name": as_name,
-        "risk_score": final_risk_score,
-        "risk_level": risk_level,
+        "risk_score": final_risk,
+        "risk_level": purity_level,
         "is_proxy": is_proxy,
         "usage_type": usage_type,
         "source_ipinfo": ipinfo_data.get("source") if ipinfo_data else "",
-        "source_ipsb": ipsb_info.get("source") if ipsb_info else "",
-        "source_iping": iping_info.get("source") if iping_info else ""
+        "source_ipsb": "",
+        "source_iping": iping_info.get("source", "iping_main")
     }
     
-    # 新格式：IP:端口#真实地区编码或中文名#风控值
-    output_country = country_code if country_code else country_cn
-    new_node = f"{ip}:{port}#{output_country}#{final_risk_score}"
+    # 新格式：IP:端口#地区中文#纯净度
+    new_node = f"{ip}:{port}#{location_chinese}#{final_risk}"
     
     return new_node, enriched_info
 
 def batch_enrich_nodes(nodes, max_workers=150, timeout=5):
     """批量处理节点 - 使用高性能异步并发框架（自动调节50-150并发）"""
     
-    # 创建异步并发管理器
     manager = AsyncConcurrencyManager(
         min_workers=50,
         max_workers=150,
@@ -687,7 +604,6 @@ def batch_enrich_nodes(nodes, max_workers=150, timeout=5):
         """工作线程：处理单个节点"""
         return enrich_node_with_real_info(node, timeout)
     
-    # 执行批量任务
     results = manager.execute_batch(
         items=nodes,
         worker_func=enrich_worker,
@@ -697,7 +613,6 @@ def batch_enrich_nodes(nodes, max_workers=150, timeout=5):
         description="真实地区与风控值检测"
     )
     
-    # 解析结果
     enriched_nodes = []
     nodes_info = {}
     
@@ -714,751 +629,711 @@ def batch_enrich_nodes(nodes, max_workers=150, timeout=5):
     
     return enriched_nodes, nodes_info
 
-def fetch_from_source(source_info):
-    """从单个数据源获取节点，支持多种格式"""
-    url = source_info.get("url")
-    name = source_info.get("name", url)
-    
-    if not source_info.get("enabled", True):
-        return []
-    
-    try:
-        print(f"  正在获取 [{name}] ...", end=" ")
-        resp = requests.get(url, timeout=(FETCH_CONNECT_TIMEOUT, FETCH_TIMEOUT))
-        resp.raise_for_status()
-        
-        lines = [line.strip() for line in resp.text.splitlines() 
-                if line.strip() and not line.startswith('#')]
-        
-        nodes = []
-        for line in lines:
-            node = None
-            
-            if NODE_LINE_PATTERN.match(line):
-                node = line
-            elif re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', line):
-                node = f"{line}#US"
-            elif re.match(r'^\d+\.\d+\.\d+\.\d+$', line):
-                node = f"{line}:443#US"
-            elif ',' in line:
-                parts = [p.strip() for p in line.split(',')]
-                
-                if parts[0] == 'IP' or not re.match(r'^\d+\.\d+\.\d+\.\d+', parts[0]):
-                    continue
-                
-                ip = parts[0]
-                port = "443"
-                country = "US"
-                
-                if len(parts) >= 3:
-                    try:
-                        port = str(int(parts[2]))
-                    except:
-                        pass
-                
-                if len(parts) >= 5:
-                    country_code = parts[4].strip().upper()
-                    if re.match(r'^[A-Z]{2}$', country_code):
-                        country = country_code
-                
-                node = f"{ip}:{port}#{country}"
-            
-            if node and NODE_LINE_PATTERN.match(node):
-                nodes.append(node)
-        
-        print(f"[OK] {len(nodes)} 个节点")
-        return nodes
-        
-    except Exception as e:
-        print(f"[FAIL] {str(e)[:50]}")
-        return []
-
-def fetch_nodes():
-    """从多个数据源获取节点（增强版：多级去重）"""
+def fetch_ip_list():
+    """从配置的数据源获取IP列表"""
     all_nodes = set()
-    ip_node_map = {}  # IP -> 最佳节点映射
-    duplicate_count = 0
+    data_sources = config.get("DATA_SOURCES", [])
     
-    data_sources = cfg.get("DATA_SOURCES", [])
+    enabled_sources = [ds for ds in data_sources if ds.get("enabled", True)]
     
-    if not data_sources:
-        data_sources = [{"url": JSON_URL, "enabled": True, "name": "主数据源"}]
+    if not enabled_sources:
+        print("⚠ 没有启用的数据源")
+        return list(all_nodes)
     
-    print(f"\n开始从 {len(data_sources)} 个数据源获取节点...")
+    print(f"\n开始获取IP列表（共 {len(enabled_sources)} 个数据源）...")
     print("=" * 60)
     
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(fetch_from_source, source): source for source in data_sources}
+    for idx, source in enumerate(enabled_sources, 1):
+        url = source.get("url", "")
+        name = source.get("name", f"数据源{idx}")
         
-        for future in as_completed(futures):
-            nodes = future.result()
-            for node in nodes:
-                m = NODE_PATTERN.match(node)
-                if m:
-                    ip = m.group(1)
-                    if ip in ip_node_map:
-                        duplicate_count += 1
-                    else:
-                        ip_node_map[ip] = node
-                all_nodes.add(node)
-    
-    unique_by_ip = list(ip_node_map.values())
-    
-    print("=" * 60)
-    print(f"原始节点: {len(all_nodes)} 个")
-    print(f"IP去重后: {len(unique_by_ip)} 个 (去除 {duplicate_count} 个重复IP)")
-    print(f"\n总计获取 {len(unique_by_ip)} 个唯一IP节点\n")
-    
-    if not unique_by_ip:
-        print("[ERROR] 未获取到任何节点，退出程序。")
-        send_wxpusher_notification(
-            content="从所有数据源均未获取到节点",
-            summary="获取节点失败"
-        )
-        sys.exit(1)
-    
-    return unique_by_ip
-
-def test_tcp_latency(ip, port, timeout=TIMEOUT, probes=TCP_PROBES):
-    min_latency = float("inf")
-    success = 0
-    for _ in range(probes):
-        try:
-            start = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(timeout)
-                sock.connect((ip, int(port)))
-            latency = time.time() - start
-            if latency < min_latency:
-                min_latency = latency
-            success += 1
-        except Exception:
+        if not url:
             continue
-    return min_latency, success
+        
+        print(f"\n[{idx}/{len(enabled_sources)}] 获取: {name}")
+        print(f"  URL: {url}")
+        
+        max_retries = config.get("FETCH_MAX_RETRIES", 3)
+        retry_delay = config.get("FETCH_RETRY_DELAY", 3)
+        fetch_timeout = config.get("FETCH_TIMEOUT", 10)
+        connect_timeout = config.get("FETCH_CONNECT_TIMEOUT", 5)
+        
+        nodes_from_source = []
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"  尝试 {attempt + 1}/{max_retries}...", end=" ")
+                
+                session = requests.Session()
+                session.headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                })
+                
+                resp = session.get(url, timeout=(connect_timeout, fetch_timeout), allow_redirects=True)
+                resp.raise_for_status()
+                
+                content = resp.text.strip()
+                
+                lines = content.split('\n')
+                valid_count = 0
+                
+                for line in lines:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    
+                    match = NODE_PATTERN.match(line)
+                    if match:
+                        node = f"{match.group(1)}:{match.group(2)}"
+                        nodes_from_source.append(node)
+                        valid_count += 1
+                
+                print(f"✓ 成功！获取 {valid_count} 个有效节点")
+                break
+                
+            except requests.exceptions.Timeout:
+                print(f"✗ 超时")
+                if attempt < max_retries - 1:
+                    print(f"  等待 {retry_delay} 秒后重试...")
+                    time.sleep(retry_delay)
+            except requests.exceptions.ConnectionError as e:
+                print(f"✗ 连接失败: {str(e)[:50]}")
+                if attempt < max_retries - 1:
+                    print(f"  等待 {retry_delay} 秒后重试...")
+                    time.sleep(retry_delay)
+            except Exception as e:
+                print(f"✗ 错误: {str(e)[:50]}")
+                break
+        
+        if nodes_from_source:
+            before_count = len(all_nodes)
+            all_nodes.update(nodes_from_source)
+            new_count = len(all_nodes) - before_count
+            print(f"  新增 {new_count} 个唯一节点（总计: {len(all_nodes)}）")
+    
+    print("\n" + "=" * 60)
+    print(f"✓ IP列表获取完成！共 {len(all_nodes)} 个唯一节点\n")
+    
+    return list(all_nodes)
 
-def test_node(node_str):
-    m = NODE_PATTERN.match(node_str)
-    if not m:
-        return None
-    ip, port, country = m.groups()
-    min_lat, success = test_tcp_latency(ip, port)
-
-    if success == 0 or (success / TCP_PROBES) < MIN_SUCCESS_RATE:
-        return None
-
-    return (node_str, min_lat, country, success)
-
-def check_availability(node_str):
-    m = IP_PORT_PATTERN.match(node_str)
-    if not m:
-        return (node_str, False, "unknown", {})
-    ip, port = m.group(1), m.group(2)
-    proxyip = f"{ip}:{port}"
-
-    best_stack = "unknown"
-    best_exit_info = {}
-    success = False
-
+def test_tcp_connection(ip, port, timeout=None):
+    """测试TCP连接并返回延迟"""
+    if timeout is None:
+        timeout = config.get("TIMEOUT", 2.5)
+    
+    socket_timeout = config.get("SOCKET_DEFAULT_TIMEOUT", 3)
+    
+    start_time = time.time()
     try:
-        resp = requests.get(
-            AVAILABILITY_CHECK_API,
-            params={"proxyip": proxyip},
-            timeout=(AVAILABILITY_CONNECT_TIMEOUT, AVAILABILITY_TIMEOUT)
-        )
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        
+        result = sock.connect_ex((ip, port))
+        
+        if result == 0:
+            latency_ms = (time.time() - start_time) * 1000
+            sock.close()
+            return True, latency_ms
+        else:
+            sock.close()
+            return False, None
+    except socket.timeout:
+        return False, None
+    except Exception as e:
+        return False, None
+
+def test_availability(ip, port):
+    """通过外部API测试IP可用性"""
+    api_url = config.get("AVAILABILITY_CHECK_API", "")
+    if not api_url:
+        return True
+    
+    try:
+        full_url = f"{api_url}?ip={ip}&port={port}"
+        resp = requests.get(full_url, 
+                          timeout=config.get("AVAILABILITY_TIMEOUT", 3),
+                          connect_timeout=config.get("AVAILABILITY_CONNECT_TIMEOUT", 3))
+        
         if resp.status_code == 200:
             data = resp.json()
-            if data.get("success") is True:
-                success = True
-                best_stack = data.get("inferred_stack", "unknown")
-                probe = data.get("probe_results", {}).get("ipv6") or data.get("probe_results", {}).get("ipv4") or {}
-                best_exit_info = probe.get("exit", {})
-    except Exception:
+            return data.get("available", True)
+    except:
         pass
-
-    return (node_str, success, best_stack, best_exit_info)
-
-def availability_filter_candidates(candidates):
-    if not TEST_AVAILABILITY or not candidates:
-        return candidates, {}, {}
-
-    print(f"\n对 {len(candidates)} 个候选节点进行可用性二次筛选...")
-    passed = []
-    ip_info = {}
-    exit_details = {}
-    completed = 0
-    total = len(candidates)
-    last_print = time.time()
-
-    with ThreadPoolExecutor(max_workers=AVAILABILITY_WORKERS) as executor:
-        futures = {executor.submit(check_availability, node): node for node in candidates}
-        for future in as_completed(futures):
-            completed += 1
-            node_str, ok, stack, exit_info = future.result()
-            if ok:
-                passed.append(node_str)
-                ip_info[node_str] = stack
-                exit_details[node_str] = exit_info
-            now = time.time()
-            if now - last_print >= PROGRESS_PRINT_INTERVAL or completed == total:
-                print(f"\r[可用性检测] 进度：{completed}/{total} ({(completed/total)*100:.1f}%) 通过数量：{len(passed)}", end="", flush=True)
-                last_print = now
-    print()
-    return passed, ip_info, exit_details
-
-def availability_filter_with_retry(candidates):
-    if not TEST_AVAILABILITY or not candidates:
-        return candidates, {}, {}
-
-    passed = []
-    ip_info = {}
-    exit_details = {}
-    for attempt in range(1, AVAILABILITY_RETRY_MAX + 1):
-        print(f"\n[可用性检测] 第 {attempt} 轮检测...")
-        passed, ip_info, exit_details = availability_filter_candidates(candidates)
-        if passed:
-            print(f"[OK] 可用性检测通过 {len(passed)} 个节点")
-            return passed, ip_info, exit_details
-        if attempt < AVAILABILITY_RETRY_MAX:
-            print(f"[WARN] 本轮可用性检测通过率为 0%，等待 {AVAILABILITY_RETRY_DELAY} 秒后重试...")
-            time.sleep(AVAILABILITY_RETRY_DELAY)
-
-    print(f"[ERROR] 可用性检测经 {AVAILABILITY_RETRY_MAX} 轮重试后仍无节点通过。")
-    send_wxpusher_notification(
-        content=f"IP 可用性检测经 {AVAILABILITY_RETRY_MAX} 轮重试后仍无节点通过，已跳过过滤，使用原候选列表继续。",
-        summary="可用性检测全部失败"
-    )
-    return candidates, {}, {}
-
-def measure_bandwidth_curl(node_str):
-    m = IP_PORT_PATTERN.match(node_str)
-    if not m:
-        return (node_str, 0)
-    ip, port = m.group(1), m.group(2)
-
-    null_device = "NUL" if sys.platform == "win32" else "/dev/null"
-    curl_cmd = [
-        "curl", "-s", "-o", null_device,
-        "-w", "%{size_download} %{time_total}",
-        "--resolve", f"speed.cloudflare.com:{port}:{ip}",
-        "--connect-timeout", str(BANDWIDTH_CONNECT_TIMEOUT),
-        "--max-time", str(BANDWIDTH_TIMEOUT),
-        "--insecure",
-        BANDWIDTH_URL
-    ]
-
-    try:
-        result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=BANDWIDTH_TIMEOUT + BANDWIDTH_PROCESS_BUFFER)
-        if result.returncode == 0 and result.stdout.strip():
-            parts = result.stdout.strip().split()
-            if len(parts) >= 2:
-                size_bytes = float(parts[0])
-                time_total = float(parts[1])
-                if time_total > 0 and size_bytes > 0:
-                    speed_mbps = (size_bytes * 8) / (time_total * 1000 * 1000)
-                    return (node_str, speed_mbps)
-    except Exception:
-        pass
-    return (node_str, 0)
-
-def bandwidth_filter(candidates):
-    if not candidates:
-        return []
-
-    if not shutil.which("curl"):
-        print("[WARN] 未检测到 curl 命令，带宽测速将跳过。")
-        return []
-
-    min_bandwidth = cfg.get("MIN_BANDWIDTH_MBPS", 1.0)
     
-    current_workers = BANDWIDTH_WORKERS
-    if BANDWIDTH_AUTO_ADJUST:
-        current_workers = min(BANDWIDTH_WORKERS_MAX, max(BANDWIDTH_WORKERS_MIN, BANDWIDTH_WORKERS))
-    
-    print(f"\n开始带宽测速（对前 {len(candidates)} 个节点，并发 {current_workers}，超时 {BANDWIDTH_TIMEOUT}s）...")
-    print(f"最小带宽要求：{min_bandwidth} Mbps")
-    if BANDWIDTH_AUTO_ADJUST:
-        print(f"自动调节并发：{BANDWIDTH_WORKERS_MIN} - {BANDWIDTH_WORKERS_MAX}")
-    
-    results = []
-    completed = 0
-    total = len(candidates)
-    last_print = time.time()
-    filtered_count = 0
-    success_count = 0
-    fail_count = 0
-    last_adjust_time = time.time()
-    adjust_interval = 5
+    return True
 
-    with ThreadPoolExecutor(max_workers=current_workers) as executor:
-        futures = {executor.submit(measure_bandwidth_curl, node): node for node in candidates}
-        for future in as_completed(futures):
-            completed += 1
-            node, speed = future.result()
-            if speed > 0:
-                success_count += 1
-                if speed >= min_bandwidth:
-                    results.append((node, speed))
-                else:
-                    filtered_count += 1
+def filter_by_country(nodes):
+    """按国家过滤节点"""
+    if not config.get("FILTER_COUNTRIES_ENABLED", False):
+        return nodes
+    
+    allowed_countries = config.get("ALLOWED_COUNTRIES", [])
+    blocked_countries = config.get("BLOCKED_COUNTRIES", [])
+    
+    if not allowed_countries and not blocked_countries:
+        return nodes
+    
+    filtered = []
+    for node in nodes:
+        match = NODE_PATTERN.match(node)
+        if match:
+            country = match.group(3) if len(match.groups()) > 2 else ""
+            
+            if allowed_countries and country in allowed_countries:
+                filtered.append(node)
+            elif blocked_countries and country not in blocked_countries:
+                filtered.append(node)
+            elif not allowed_countries and country not in blocked_countries:
+                filtered.append(node)
+    
+    return filtered if filtered else nodes
+
+def filter_ipv6_unavailable(nodes):
+    """过滤IPv6不可用的节点"""
+    if not config.get("FILTER_IPV6_AVAILABILITY", False):
+        return nodes
+    
+    filtered = []
+    for node in nodes:
+        match = NODE_PATTERN.match(node)
+        if match:
+            ip = match.group(1)
+            if ':' in ip:
+                available = test_availability(match.group(1), match.group(2))
+                if available:
+                    filtered.append(node)
             else:
-                fail_count += 1
-            
-            now = time.time()
-            if now - last_print >= PROGRESS_PRINT_INTERVAL or completed == total:
-                print(f"\r[带宽测速] 进度：{completed}/{total} ({(completed/total)*100:.1f}%) 有效：{len(results)} 低速过滤：{filtered_count} 并发：{current_workers}", end="", flush=True)
-                last_print = now
-            
-            if BANDWIDTH_AUTO_ADJUST and (now - last_adjust_time >= adjust_interval) and completed < total:
-                total_tested = success_count + fail_count
-                if total_tested > 0:
-                    success_rate = success_count / total_tested
-                    
-                    if success_rate > 0.7 and current_workers < BANDWIDTH_WORKERS_MAX:
-                        new_workers = min(BANDWIDTH_WORKERS_MAX, current_workers + 10)
-                        if new_workers != current_workers:
-                            current_workers = new_workers
-                            executor._max_workers = current_workers
-                    elif success_rate < 0.3 and current_workers > BANDWIDTH_WORKERS_MIN:
-                        new_workers = max(BANDWIDTH_WORKERS_MIN, current_workers - 10)
-                        if new_workers != current_workers:
-                            current_workers = new_workers
-                            executor._max_workers = current_workers
-                    
-                    last_adjust_time = now
-                    success_count = 0
-                    fail_count = 0
-
-    print()
+                filtered.append(node)
     
-    if filtered_count > 0:
-        print(f"已过滤 {filtered_count} 个低带宽节点（< {min_bandwidth} Mbps）")
+    return filtered
+
+def probe_tcp_multiple_times(ip, port, probes=None):
+    """多次探测TCP连接取最佳延迟"""
+    if probes is None:
+        probes = config.get("TCP_PROBES", 3)
     
-    results.sort(key=lambda x: x[1], reverse=True)
-    print(f"带宽测速完成，有效节点 {len(results)} 个")
+    latencies = []
     
-    return results
+    for _ in range(probes):
+        success, latency = test_tcp_connection(ip, port)
+        if success and latency is not None:
+            latencies.append(latency)
+    
+    if latencies:
+        return min(latencies)
+    
+    return None
 
-def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, target_count=None, latency_map=None):
-    if not cfg.get("CF_ENABLED", False):
-        print("Cloudflare DNS 批量更新未启用。")
-        return
-
-    if target_count is None:
-        target_count = cfg.get("DNS_UPDATE_TARGET_COUNT", 15)
-
-    dns_ip_list = []
-    dns_node_list = []
-    filtered_by_port = 0
-    filtered_by_ipv6 = 0
-    filtered_by_country = 0
-
-    if full_bw_results and ip_info:
-        blocked_set = set()
-        if cfg.get("FILTER_BLOCKED_COUNTRIES_ENABLED", False):
-            blocked_set = {c.upper() for c in cfg.get("BLOCKED_COUNTRIES", [])}
-
-        for node_str, speed in full_bw_results:
-            if ':' in node_str:
-                port = node_str.split(':')[1].split('#')[0]
-                if port != '443':
-                    filtered_by_port += 1
-                    continue
-
-            if cfg.get("FILTER_IPV6_AVAILABILITY", False):
-                stack = ip_info.get(node_str, "unknown")
-                if stack == "ipv6_only":
-                    filtered_by_ipv6 += 1
-                    continue
-
-            if blocked_set and '#' in node_str:
-                country = node_str.split('#')[-1].upper()
-                if country in blocked_set:
-                    filtered_by_country += 1
-                    continue
-
-            pure_ip = node_str.split(':')[0]
-            dns_ip_list.append(pure_ip)
-            dns_node_list.append(node_str)
-
-            if len(dns_ip_list) >= target_count:
+def measure_bandwidth(ip, port, size_mb=None, timeout=None):
+    """测量下载带宽"""
+    if size_mb is None:
+        size_mb = config.get("BANDWIDTH_SIZE_MB", 2.0)
+    if timeout is None:
+        timeout = config.get("BANDWIDTH_TIMEOUT", 8)
+    
+    bytes_count = int(size_mb * 1024 * 1024)
+    url_template = config.get("BANDWIDTH_URL_TEMPLATE", "https://speed.cloudflare.com/__down?bytes={bytes}")
+    url = url_template.format(bytes=bytes_count)
+    
+    headers = {"Host": "speed.cloudflare.com"}
+    
+    start_time = time.time()
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(config.get("BANDWIDTH_CONNECT_TIMEOUT", 5))
+        sock.connect((ip, port))
+        
+        request = f"GET {url} HTTP/1.1\r\nHost: speed.cloudflare.com\r\nConnection: close\r\n\r\n"
+        sock.sendall(request.encode())
+        
+        total_received = 0
+        buffer_size = config.get("BANDWIDTH_PROCESS_BUFFER", 2) * 1024 * 1024
+        
+        while True:
+            chunk = sock.recv(buffer_size)
+            if not chunk:
                 break
+            total_received += len(chunk)
+            
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                break
+        
+        sock.close()
+        
+        elapsed_time = time.time() - start_time
+        
+        if total_received > 0 and elapsed_time > 0:
+            bandwidth_bps = (total_received * 8) / elapsed_time
+            bandwidth_mbps = bandwidth_bps / 1000000
+            return bandwidth_mbps
+        
+        return None
+        
+    except socket.timeout:
+        return None
+    except Exception as e:
+        return None
 
-        filter_parts = []
-        if filtered_by_port > 0:
-            filter_parts.append(f"非443端口过滤({filtered_by_port}个)")
-        if cfg.get("FILTER_IPV6_AVAILABILITY", False):
-            filter_parts.append(f"IPv6落地过滤({filtered_by_ipv6}个)")
-        if cfg.get("FILTER_BLOCKED_COUNTRIES_ENABLED", False):
-            filter_parts.append(f"屏蔽国家过滤({filtered_by_country}个)")
-        filter_str = " + ".join(filter_parts) if filter_parts else "无过滤"
-        print(f"从 {len(full_bw_results)} 个测速节点中筛选出 {len(dns_ip_list)} 个节点用于 DNS 更新（{filter_str}）。")
+def select_best_nodes(nodes):
+    """选择最优节点（支持全球模式和分国家模式）"""
+    use_global_mode = config.get("USE_GLOBAL_MODE", True)
+    global_top_n = config.get("GLOBAL_TOP_N", 300)
+    per_country_top_n = config.get("PER_COUNTRY_TOP_N", 10)
+    min_bandwidth_mbps = config.get("MIN_BANDWIDTH_MBPS", 2.0)
+    
+    if use_global_mode:
+        valid_nodes = [(n, b, l) for n, b, l in nodes if b >= min_bandwidth_mbps]
+        valid_nodes.sort(key=lambda x: (-x[1], x[2]))
+        return valid_nodes[:global_top_n]
+    else:
+        from collections import defaultdict
+        country_groups = defaultdict(list)
+        
+        for node, bandwidth, latency in nodes:
+            if bandwidth >= min_bandwidth_mbps:
+                match = NODE_PATTERN.match(node)
+                country = match.group(3) if match and len(match.groups()) > 2 else "Unknown"
+                country_groups[country].append((node, bandwidth, latency))
+        
+        best_nodes = []
+        for country in sorted(country_groups.keys()):
+            country_nodes = country_groups[country]
+            country_nodes.sort(key=lambda x: (-x[1], x[2]))
+            best_nodes.extend(country_nodes[:per_country_top_n])
+        
+        return best_nodes
 
-    if not dns_ip_list:
-        if ip_list:
-            print("[WARN] 未能从完整测速结果构建 DNS 列表，降级使用 ip.txt 中的 IP。")
-            dns_ip_list = ip_list
-            dns_node_list = ip_list
+def format_output_line(node, bandwidth, latency, real_location=""):
+    """格式化输出行"""
+    match = NODE_PATTERN.match(node)
+    if match:
+        ip = match.group(1)
+        port = match.group(2)
+        country = match.group(3) if len(match.groups()) > 2 else ""
+        
+        if real_location:
+            return f"{ip}:{port}:{port} #{country} 风控:{real_location.split('#')[-1] if '#' in real_location else '?'}({real_location.split('#')[0] if '#' in real_location else ''}) 速度 {bandwidth:.2f} Mbps  延迟 {latency:.2f} ms [{real_location}]"
         else:
-            msg = "没有可用的 IP 用于 DNS 更新，跳过。"
-            print(msg)
-            send_wxpusher_notification(content=msg, summary="DNS 更新跳过")
-            return
+            return f"{ip}:{port}:{port} #{country} 速度 {bandwidth:.2f} Mbps  延迟 {latency:.2f} ms"
+    
+    return f"{node} 速度 {bandwidth:.2f} Mbps  延迟 {latency:.2f} ms"
 
-    seen = set()
-    unique_ips = []
-    unique_nodes = []
-    for ip, node in zip(dns_ip_list, dns_node_list):
-        if ip not in seen:
-            seen.add(ip)
-            unique_ips.append(ip)
-            unique_nodes.append(node)
-    dns_ip_list = unique_ips
-    dns_node_list = unique_nodes
-
-    print(f"\n准备将以下 {len(dns_ip_list)} 个 IP 批量更新到 Cloudflare DNS:")
-    speed_map = {}
-    if full_bw_results:
-        speed_map = {node: speed for node, speed in full_bw_results}
-    for i, (ip, node) in enumerate(zip(dns_ip_list, dns_node_list), 1):
-        speed = speed_map.get(node, 0)
-        lat_ms = float('inf')
-        if latency_map and node in latency_map:
-            lat_ms = latency_map[node] * 1000
-        if lat_ms != float('inf'):
-            print(f"{i}. {node} 速度 {speed:.2f} Mbps 延迟 {lat_ms:.2f} ms")
+def send_wxpusher_notification(content):
+    """发送微信推送通知"""
+    if not config.get("ENABLE_WXPUSHER", False):
+        return
+    
+    app_token = config.get("WXPUSHER_APP_TOKEN", "")
+    uids = config.get("WXPUSHER_UIDS", [])
+    api_url = config.get("WXPUSHER_API_URL", "")
+    
+    if not app_token or not uids or not api_url:
+        return
+    
+    try:
+        payload = {
+            "appToken": app_token,
+            "content": content,
+            "contentType": 1,
+            "uids": uids
+        }
+        
+        resp = requests.post(
+            api_url,
+            json=payload,
+            timeout=(
+                config.get("NOTIFY_CONNECT_TIMEOUT", 3),
+                config.get("NOTIFY_TIMEOUT", 3)
+            )
+        )
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("code") == 1000:
+                print("✓ 微信推送通知发送成功")
+            else:
+                print(f"⚠ 微信推送失败: {data.get('msg')}")
         else:
-            print(f"{i}. {ip} 速度 {speed:.2f} Mbps")
+            print(f"⚠ 微信推送HTTP错误: {resp.status_code}")
+            
+    except Exception as e:
+        print(f"⚠ 微信推送异常: {e}")
 
+def update_cloudflare_dns(best_nodes):
+    """更新Cloudflare DNS记录"""
+    if not config.get("CF_ENABLED", False):
+        return
+    
+    cf_api_token = config.get("CF_API_TOKEN", "")
+    cf_zone_id = config.get("CF_ZONE_ID", "")
+    cf_dns_record_name = config.get("CF_DNS_RECORD_NAME", "")
+    
+    if not all([cf_api_token, cf_zone_id, cf_dns_record_name]):
+        print("⚠ Cloudflare配置不完整，跳过DNS更新")
+        return
+    
+    target_count = config.get("DNS_UPDATE_TARGET_COUNT", 15)
+    update_nodes = best_nodes[:target_count]
+    
+    if not update_nodes:
+        print("⚠ 没有可用的节点用于更新DNS")
+        return
+    
+    print(f"\n准备更新Cloudflare DNS记录:")
+    print(f"  记录名: {cf_dns_record_name}")
+    print(f"  目标数量: {target_count}")
+    
     headers = {
-        "Authorization": f"Bearer {cfg['CF_API_TOKEN']}",
+        "Authorization": f"Bearer {cf_api_token}",
         "Content-Type": "application/json"
     }
-    zone_id = cfg['CF_ZONE_ID']
-    record_name = cfg['CF_DNS_RECORD_NAME']
-    ttl = cfg.get('CF_TTL', 120)
-    proxied = cfg.get('CF_PROXIED', False)
-
-    max_retries = cfg.get('DNS_UPDATE_MAX_RETRIES', 5)
-    retry_delay = cfg.get('DNS_UPDATE_RETRY_DELAY', 10)
-
-    for attempt in range(1, max_retries + 1):
-        print(f"\n[DNS 更新] 尝试 {attempt}/{max_retries}...")
-        try:
-            list_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?type=A&name={record_name}"
-            response = requests.get(list_url, headers=headers, timeout=(CF_DNS_CONNECT_TIMEOUT, CF_DNS_READ_TIMEOUT))
-            response.raise_for_status()
-            result = response.json()
-            if not result.get('success'):
-                error_detail = result.get('errors')
-                raise Exception(f"查询 DNS 记录失败: {error_detail}")
-
-            existing_records = result.get('result', [])
-            deletes = [{"id": rec["id"]} for rec in existing_records]
-            posts = [
-                {
-                    "name": record_name,
-                    "type": "A",
-                    "content": ip,
-                    "ttl": ttl,
-                    "proxied": proxied
-                }
-                for ip in dns_ip_list
-            ]
-
-            batch_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/batch"
-            payload = {"deletes": deletes, "posts": posts}
-            response = requests.post(batch_url, headers=headers, json=payload, timeout=(CF_DNS_CONNECT_TIMEOUT, CF_DNS_READ_TIMEOUT))
-            response.raise_for_status()
-            result = response.json()
-            if not result.get('success'):
-                error_detail = result.get('errors')
-                raise Exception(f"批量更新失败: {error_detail}")
-
-            success_msg = f"[OK] Cloudflare DNS 批量更新成功！已将 {record_name} 指向 {len(dns_ip_list)} 个 IP。"
-            print(success_msg)
-            print("   注意：DNS 解析将随机返回这些 IP 中的一个，实现负载均衡。")
-            return
-
-        except Exception as e:
-            error_msg = f"[尝试 {attempt}/{max_retries}] DNS 更新出错: {e}"
-            print(error_msg)
-            if attempt < max_retries:
-                print(f"等待 {retry_delay} 秒后重试...")
-                time.sleep(retry_delay)
-            else:
-                final_error = f"[ERROR] Cloudflare DNS 更新失败，已重试 {max_retries} 次，错误：{e}"
-                print(final_error)
-                send_wxpusher_notification(content=final_error, summary="DNS 更新失败")
-
-def sync_to_github():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-
-    if sys.platform == "win32":
-        script_name = "git_sync.ps1"
-        interpreter = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]
-        creationflags = subprocess.CREATE_NO_WINDOW
-    else:
-        script_name = "git_sync.sh"
-        interpreter = ["bash"]
-        creationflags = 0
-
-    script_path = os.path.join(script_dir, script_name)
-    if not os.path.exists(script_path):
-        print(f"[WARN] 未找到 {script_name}，跳过 GitHub 同步。")
-        return
-
-    if sys.platform != "win32":
-        try:
-            os.chmod(script_path, 0o755)
-        except Exception:
-            pass
-
-    max_retries = cfg.get('GITHUB_SYNC_MAX_RETRIES', 3)
-    retry_delay = cfg.get('GITHUB_SYNC_RETRY_DELAY', 3)
-    process_timeout = cfg.get('GIT_SYNC_PROCESS_TIMEOUT', 180)
-
-    for attempt in range(1, max_retries + 1):
-        print(f"\n正在同步到 GitHub (尝试 {attempt}/{max_retries})...")
-        try:
-            cmd = interpreter + [script_path]
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                creationflags=creationflags
-            )
-
+    
+    existing_records = []
+    try:
+        list_url = f"https://api.cloudflare.com/client/v4/zones/{cf_zone_id}/dns_records?name={cf_dns_record_name}&type=A"
+        resp = requests.get(list_url, headers=headers, 
+                          timeout=(config.get("CF_DNS_CONNECT_TIMEOUT", 3), 
+                                  config.get("CF_DNS_READ_TIMEOUT", 3)))
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                existing_records = data.get("result", [])
+    except Exception as e:
+        print(f"⚠ 获取现有DNS记录失败: {e}")
+    
+    for idx, (node, bandwidth, latency) in enumerate(update_nodes[:5], 1):
+        match = NODE_PATTERN.match(node)
+        if not match:
+            continue
+        
+        ip = match.group(1)
+        
+        record_name_full = f"{cf_dns_record_name}" if idx == 1 else f"{idx}-{cf_dns_record_name}"
+        
+        print(f"\n[{idx}] 更新DNS: {record_name_full} -> {ip}")
+        print(f"    速度: {bandwidth:.2f} Mbps | 延迟: {latency:.2f} ms")
+        
+        max_retries = config.get("DNS_UPDATE_MAX_RETRIES", 3)
+        retry_delay = config.get("DNS_UPDATE_RETRY_DELAY", 3)
+        
+        for attempt in range(max_retries):
             try:
-                stdout, stderr = process.communicate(timeout=process_timeout)
-                if process.returncode == 0:
-                    print("[OK] 已自动推送到 GitHub。")
-                    return
+                existing_record = None
+                for record in existing_records:
+                    if record.get("name") == record_name_full:
+                        existing_record = record
+                        break
+                
+                body = {
+                    "type": "A",
+                    "name": record_name_full,
+                    "content": ip,
+                    "ttl": config.get("CF_TTL", 60),
+                    "proxied": config.get("CF_PROXIED", False)
+                }
+                
+                if existing_record:
+                    update_url = f"https://api.cloudflare.com/client/v4/zones/{cf_zone_id}/dns_records/{existing_record['id']}"
+                    resp = requests.put(update_url, headers=headers, json=body,
+                                      timeout=(config.get("CF_DNS_CONNECT_TIMEOUT", 3),
+                                              config.get("CF_DNS_READ_TIMEOUT", 3)))
                 else:
-                    print(f"[ERROR] 推送失败 (退出码 {process.returncode})")
-                    if stderr:
-                        print(f"错误信息: {stderr.strip()}")
-            except subprocess.TimeoutExpired:
-                process.kill()
-                print(f"[ERROR] 推送超时（超过 {process_timeout} 秒）")
-        except Exception as e:
-            print(f"[ERROR] 推送过程异常: {e}")
+                    create_url = f"https://api.cloudflare.com/client/v4/zones/{cf_zone_id}/dns_records"
+                    resp = requests.post(create_url, headers=headers, json=body,
+                                       timeout=(config.get("CF_DNS_CONNECT_TIMEOUT", 3),
+                                               config.get("CF_DNS_READ_TIMEOUT", 3)))
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("success"):
+                        print(f"    ✓ DNS更新成功")
+                        break
+                    else:
+                        errors = data.get("errors", [])
+                        error_msg = errors[0].get("message", "未知错误") if errors else "未知错误"
+                        print(f"    ✗ API错误: {error_msg}")
+                else:
+                    print(f"    ✗ HTTP错误: {resp.status_code}")
+                    
+            except Exception as e:
+                print(f"    ✗ 异常: {e}")
+            
+            if attempt < max_retries - 1:
+                print(f"    等待 {retry_delay} 秒后重试...")
+                time.sleep(retry_delay)
 
-        if attempt < max_retries:
+def sync_to_github(output_file="ip.txt"):
+    """同步结果到GitHub仓库"""
+    if not os.path.exists(".git"):
+        return
+    
+    max_retries = config.get("GITHUB_SYNC_MAX_RETRIES", 3)
+    retry_delay = config.get("GITHUB_SYNC_RETRY_DELAY", 3)
+    process_timeout = config.get("GIT_SYNC_PROCESS_TIMEOUT", 180)
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"\n同步到GitHub (尝试 {attempt + 1}/{max_retries})...")
+            
+            result = subprocess.run(
+                ["git", "add", output_file],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            commit_result = subprocess.run(
+                ["git", "commit", "-m", f"update: 更新优选IP列表 ({timestamp})"],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if commit_result.returncode != 0 and "nothing to commit" in commit_result.stdout:
+                print("✓ 无需更新（内容未变化）")
+                return
+            
+            push_result = subprocess.run(
+                ["git", "push", "origin", "main"],
+                capture_output=True,
+                text=True,
+                timeout=process_timeout
+            )
+            
+            if push_result.returncode == 0:
+                print("✓ GitHub同步成功")
+                return
+            else:
+                print(f"✗ 推送失败: {push_result.stderr[-200:] if push_result.stderr else '未知错误'}")
+                
+        except subprocess.TimeoutExpired:
+            print(f"✗ Git操作超时 ({process_timeout}秒)")
+        except Exception as e:
+            print(f"✗ 同步异常: {e}")
+        
+        if attempt < max_retries - 1:
             print(f"等待 {retry_delay} 秒后重试...")
             time.sleep(retry_delay)
 
-    send_wxpusher_notification(
-        content=f"GitHub 推送失败，已重试 {max_retries} 次，请检查网络或仓库状态。",
-        summary="GitHub 推送失败"
-    )
-    print(f"[WARN] 已尝试 {max_retries} 次推送，均失败。")
-    print(f"[INFO] 请手动执行以下命令进行推送：")
-    print(f"       python push_to_github.py {OUTPUT_FILE}")
-    print(f"       或者：")
-    print(f"       git add {OUTPUT_FILE}")
-    print(f"       git commit -m \"Update IP list\"")
-    print(f"       git push origin HEAD")
-
 def main():
-    mode_str = f"全局最优{GLOBAL_TOP_N}个" if USE_GLOBAL_MODE else f"每个国家最优{PER_COUNTRY_TOP_N}个"
-    print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
-    print(f"最低成功率要求：{MIN_SUCCESS_RATE*100:.0f}%")
-    print(f"IP 可用性二次筛选：{'启用' if TEST_AVAILABILITY else '禁用'}（仅对候选节点）")
-    print(f"IPv6 客户端 IP 过滤（仅作用于DNS更新环节）：{'启用' if FILTER_IPV6_AVAILABILITY else '禁用'}")
-    print(f"屏蔽国家过滤（仅作用于DNS更新环节）：{'启用' if FILTER_BLOCKED_COUNTRIES_ENABLED else '禁用'}，屏蔽国家：{', '.join(BLOCKED_COUNTRIES)}")
-    print(f"带宽测速候选数：{BANDWIDTH_CANDIDATES}，测速文件大小：{BANDWIDTH_SIZE_MB} MB，超时：{BANDWIDTH_TIMEOUT}s")
-    if FILTER_COUNTRIES_ENABLED:
-        print(f"国家过滤：启用，允许国家：{', '.join(ALLOWED_COUNTRIES)}")
-
-    nodes = fetch_nodes()
+    """主函数"""
+    print("=" * 70)
+    print("🌍 Cloudflare IP优选工具 - 增强版")
+    print("   支持真实地区检测 | 风控值评估 | 异步并发框架")
+    print("=" * 70)
+    print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    
+    start_time = time.time()
+    
+    nodes = fetch_ip_list()
+    
     if not nodes:
-        print("没有获取到任何有效节点，退出。")
-        sys.exit(1)
-
-    if FILTER_COUNTRIES_ENABLED and ALLOWED_COUNTRIES:
-        before = len(nodes)
-        allowed_set = {c.upper() for c in ALLOWED_COUNTRIES}
-        filtered_nodes = []
-        for node in nodes:
-            parts = node.split('#')
-            if len(parts) == 2 and parts[1].upper() in allowed_set:
-                filtered_nodes.append(node)
-        nodes = filtered_nodes
-        after = len(nodes)
-        print(f"\n国家过滤（测试前）：{before} -> {after} 个节点（允许国家：{', '.join(allowed_set)}）")
-        if not nodes:
-            print("[WARN] 过滤后无任何节点，退出程序。")
-            sys.exit(0)
-
-    total = len(nodes)
-    print(f"开始 TCP 连接测试（超时 {TIMEOUT}s，并发 {MAX_WORKERS}）...")
-
-    results = []
-    completed = 0
-    last_print = time.time()
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(test_node, node): node for node in nodes}
-        for future in as_completed(futures):
-            completed += 1
-            res = future.result()
-            if res:
-                results.append(res)
-            now = time.time()
-            if now - last_print >= PROGRESS_PRINT_INTERVAL or completed == total:
-                print(f"\r进度：{completed}/{total} ({(completed/total)*100:.1f}%)", end="", flush=True)
-                last_print = now
-
-    print("\nTCP 测试完成！")
-    if not results:
-        print("没有通过成功率筛选的节点，请检查网络或降低 MIN_SUCCESS_RATE。")
-        sys.exit(0)
-
-    results.sort(key=lambda x: (-x[3], x[1]))
-    latency_map = {node: lat for node, lat, _, _ in results}
-
-    if USE_GLOBAL_MODE:
-        candidates = [node for node, _, _, _ in results[:BANDWIDTH_CANDIDATES]]
-        print(f"\nTCP 最优前 {len(candidates)} 个节点进入候选池。")
-    else:
-        country_nodes = defaultdict(list)
-        for node_str, lat, country, succ in results:
-            country_nodes[country].append((node_str, lat, succ))
-
-        total_countries = len(country_nodes)
-        base_limit = max(1, BANDWIDTH_CANDIDATES // total_countries)
-        candidates = []
-        for country, nodes in country_nodes.items():
-            nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
-            limit = min(len(nodes_sorted), base_limit)
-            for node_str, lat, succ in nodes_sorted[:limit]:
-                candidates.append(node_str)
-        print(f"\n各国家候选池分配：共 {total_countries} 个国家，每国最多 {base_limit} 个候选，总计 {len(candidates)} 个节点进入候选池。")
-
-    if not candidates:
-        print("没有候选节点，退出。")
-        sys.exit(0)
-
-    candidates_after_availability, avail_ip_info, avail_exit_details = availability_filter_with_retry(candidates)
-
-    bw_results = []
-    for attempt in range(1, BANDWIDTH_RETRY_MAX + 1):
-        print(f"\n[带宽测速] 第 {attempt} 轮测试...")
-        bw_results = bandwidth_filter(candidates_after_availability)
-        if bw_results:
-            break
-        if attempt < BANDWIDTH_RETRY_MAX:
-            print(f"[WARN] 本轮测速无有效结果，等待 {BANDWIDTH_RETRY_DELAY} 秒后重试...")
-            time.sleep(BANDWIDTH_RETRY_DELAY)
-
-    if not bw_results:
-        print("\n[WARN] 带宽测速多次重试仍无有效结果，将使用 TCP 筛选结果作为最终节点。")
-        send_wxpusher_notification(
-            content=f"带宽测速经 {BANDWIDTH_RETRY_MAX} 轮尝试后仍无有效结果，已降级使用 TCP 排序节点。",
-            summary="带宽测速全部失败"
-        )
-        if USE_GLOBAL_MODE:
-            final_selected = [node for node, _, _, _ in results[:GLOBAL_TOP_N]]
-        else:
-            final_selected = []
-            for country, nodes in country_nodes.items():
-                nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
-                for node_str, _, _ in nodes_sorted[:PER_COUNTRY_TOP_N]:
-                    final_selected.append(node_str)
-    else:
-        if USE_GLOBAL_MODE:
-            final_selected = [node for node, _ in bw_results[:GLOBAL_TOP_N]]
-        else:
-            country_speed_nodes = defaultdict(list)
-            for node, speed in bw_results:
-                country = node.split('#')[-1] if '#' in node else ''
-                if country:
-                    country_speed_nodes[country].append((node, speed))
-            final_selected = []
-            for country, nodes in country_speed_nodes.items():
-                for node, speed in nodes[:PER_COUNTRY_TOP_N]:
-                    final_selected.append(node)
-            speed_map = {node: speed for node, speed in bw_results}
-            final_selected.sort(key=lambda x: speed_map.get(x, 0), reverse=True)
-
-        print("\n================ 最终优选节点 ================")
-        speed_map = {node: speed for node, speed in bw_results}
+        print("✗ 未获取到任何IP节点，程序退出")
+        return
+    
+    nodes = filter_by_country(nodes)
+    nodes = filter_ipv6_unavailable(nodes)
+    
+    print(f"过滤后剩余 {len(nodes)} 个节点\n")
+    
+    if not nodes:
+        print("✗ 过滤后无可用节点，程序退出")
+        return
+    
+    print("=" * 70)
+    print("阶段1: TCP连接测试（初步筛选）")
+    print("=" * 70)
+    
+    tcp_test_results = []
+    total_nodes = len(nodes)
+    tested = 0
+    
+    print(f"\n开始TCP连接测试（共 {total_nodes} 个节点）...")
+    print("-" * 60)
+    
+    batch_size = 500
+    for i in range(0, total_nodes, batch_size):
+        batch = nodes[i:i + batch_size]
         
-        final_unique = []
-        seen_ips = set()
-        dup_removed = 0
+        with ThreadPoolExecutor(max_workers=config.get("MAX_WORKERS", 300)) as executor:
+            future_to_node = {executor.submit(test_tcp_connection, 
+                                           NODE_PATTERN.match(n).group(1), 
+                                           NODE_PATTERN.match(n).group(2)): n 
+                            for n in batch}
+            
+            for future in as_completed(future_to_node):
+                node = future_to_node[future]
+                try:
+                    success, latency = future.result()
+                    if success and latency is not None:
+                        tcp_test_results.append((node, latency))
+                    
+                    tested += 1
+                    
+                    if tested % config.get("PROGRESS_PRINT_INTERVAL", 1) * 100 == 0 or tested == total_nodes:
+                        pct = tested * 100 // total_nodes
+                        print(f"  进度: {tested}/{total_nodes} ({pct}%)")
+                        
+                except Exception as e:
+                    tested += 1
+    
+    print("-" * 60)
+    print(f"TCP测试完成！可用节点: {len(tcp_test_results)}/{total_nodes}\n")
+    
+    if not tcp_test_results:
+        print("✗ 所有节点均不可达，程序退出")
+        return
+    
+    tcp_test_results.sort(key=lambda x: x[1])
+    
+    candidates_count = config.get("BANDWIDTH_CANDIDATES", 1000)
+    candidates = tcp_test_results[:candidates_count]
+    
+    print(f"选择前 {len(candidates)} 个节点进行带宽测试\n")
+    
+    if config.get("ENABLE_REAL_LOCATION_DETECT", True) and config.get("ENABLE_RISK_SCORE", True):
+        print("=" * 70)
+        print("阶段2: 真实地区与风控值检测（异步并发框架）")
+        print("=" * 70)
         
-        for node in final_selected:
-            ip = node.split(':')[0] if ':' in node else node
-            if ip not in seen_ips:
-                seen_ips.add(ip)
-                final_unique.append(node)
-            else:
-                dup_removed += 1
+        candidate_nodes = [node for node, _ in candidates]
         
-        if dup_removed > 0:
-            print(f"[INFO] 最终输出去除 {dup_removed} 个重复IP")
-        
-        final_selected = final_unique
-        
-        # 真实地区检测与风控值评估
-        print("\n[INFO] 开始真实地区与风控值检测...")
-        final_selected, nodes_real_info = batch_enrich_nodes(
-            final_selected, 
-            max_workers=min(20, len(final_selected)),
-            timeout=5
+        enriched_nodes, nodes_info = batch_enrich_nodes(
+            candidate_nodes,
+            max_workers=config.get("REAL_LOCATION_WORKERS", 150),
+            timeout=config.get("REAL_LOCATION_TIMEOUT", 5)
         )
         
-        print("\n================ 最终优选节点（含真实信息）=")
-        speed_map = {node: speed for node, speed in bw_results}
+        enriched_dict = {}
+        for new_node in enriched_nodes:
+            match = NODE_PATTERN.match(new_node)
+            if match:
+                ip = match.group(1)
+                enriched_dict[ip] = new_node
         
-        for i, node in enumerate(final_selected, 1):
-            speed = speed_map.get(node.split('#')[0] + '#' + node.split('#')[1] if '#' in node else node, 0)
-            lat_sec = latency_map.get(node, float('inf'))
-            
-            # 解析新格式：IP:端口#国家#风控值
-            parts = node.split('#') if '#' in node else [node]
-            ip_port = parts[0] if parts else node
-            country = parts[1] if len(parts) > 1 else "??"
-            risk_score = parts[2] if len(parts) > 2 else "??"
-            
-            # 获取详细信息
-            ip = ip_port.split(':')[0] if ':' in ip_port else ip_port
-            info = nodes_real_info.get(ip, {})
-            real_location = info.get("real_location", "未知")
-            risk_level = info.get("risk_level", "未知")
-            
-            if lat_sec != float('inf'):
-                print(f"{i}. {ip_port} #{country} 风控:{risk_score}({risk_level}) 速度 {speed:.2f} Mbps 延迟 {lat_sec*1000:.2f} ms [{real_location}]")
-            else:
-                print(f"{i}. {ip_port} #{country} 风控:{risk_score}({risk_level}) 速度 {speed:.2f} Mbps [{real_location}]")
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for node_str in final_selected:
-            f.write(node_str + "\n")
-    print(f"\n[OK] 结果已保存到 {OUTPUT_FILE}（共 {len(final_selected)} 个节点，含真实地区和风控值）")
-    print(f"   格式：IP:端口#国家代码#风控值（0-100，越低越纯净）")
-
-    ip_list = []
-    try:
-        with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
-            ip_list = [line.split(':')[0].strip() for line in f if line.strip()]
-    except Exception as e:
-        print(f"读取 {OUTPUT_FILE} 时发生错误: {e}")
-
-    target_dns_count = GLOBAL_TOP_N if USE_GLOBAL_MODE else PER_COUNTRY_TOP_N
-    batch_update_cloudflare_dns(
-        ip_list,
-        ip_info=avail_ip_info,
-        full_bw_results=bw_results,
-        target_count=target_dns_count,
-        latency_map=latency_map
+        updated_candidates = []
+        for node, latency in candidates:
+            match = NODE_PATTERN.match(node)
+            if match:
+                ip = match.group(1)
+                if ip in enriched_dict:
+                    updated_candidates.append((enriched_dict[ip], latency))
+                else:
+                    updated_candidates.append((node, latency))
+        
+        candidates = updated_candidates
+        
+        print(f"已更新 {len(enriched_dict)} 个节点的真实地区和风控值\n")
+    
+    print("=" * 70)
+    print("阶段3: 带宽测试（异步并发 + 自动调节）")
+    print("=" * 70)
+    
+    bandwidth_manager = AsyncConcurrencyManager(
+        min_workers=config.get("BANDWIDTH_WORKERS_MIN", 50),
+        max_workers=config.get("BANDWIDTH_WORKERS_MAX", 150),
+        initial_workers=config.get("BANDWIDTH_WORKERS", 100),
+        success_threshold_high=0.85,
+        success_threshold_low=0.4,
+        adjust_step=15,
+        name="带宽测试"
     )
-
-    if os.environ.get('GITHUB_ACTIONS') != 'true':
-        sync_to_github()
-    else:
-        print("\n[INFO] 运行在 GitHub Actions 环境中，跳过自动推送（由工作流处理）")
+    
+    def bandwidth_worker(item):
+        """带宽测试工作函数"""
+        node, latency = item
+        match = NODE_PATTERN.match(node)
+        if match:
+            ip = match.group(1)
+            port = match.group(2)
+            
+            retry_max = config.get("BANDWIDTH_RETRY_MAX", 2)
+            retry_delay = config.get("BANDWIDTH_RETRY_DELAY", 3)
+            
+            for attempt in range(retry_max + 1):
+                bandwidth = measure_bandwidth(ip, port)
+                
+                if bandwidth is not None:
+                    return (node, bandwidth, latency)
+                
+                if attempt < retry_max:
+                    time.sleep(retry_delay)
+            
+            return (node, 0, latency)
+        
+        return (node, 0, 0)
+    
+    bw_results = bandwidth_manager.execute_batch(
+        items=candidates,
+        worker_func=bandwidth_worker,
+        timeout=config.get("BANDWIDTH_TIMEOUT", 8) + 2,
+        show_progress=True,
+        progress_interval=5,
+        description="带宽测速"
+    )
+    
+    valid_bw_results = [(n, b, l) for n, r in bw_results if r is not None for n, b, l in [r] if b > 0]
+    
+    print(f"\n带宽测试完成！有效结果: {len(valid_bw_results)}/{len(candidates)}\n")
+    
+    if not valid_bw_results:
+        print("✗ 所有节点带宽测试失败")
+        return
+    
+    best_nodes = select_best_nodes(valid_bw_results)
+    
+    print("=" * 70)
+    print("最终优选节点（含真实信息）")
+    print("=" * 70)
+    
+    output_lines = []
+    for idx, (node, bandwidth, latency) in enumerate(best_nodes, 1):
+        match = NODE_PATTERN.match(node)
+        real_location = ""
+        
+        if match:
+            ip = match.group(1)
+            if ip in nodes_info:
+                info = nodes_info[ip]
+                real_location = info.get("real_location", "")
+        
+        line = format_output_line(node, bandwidth, latency, real_location)
+        output_lines.append(line)
+        print(f"{idx}. {line}")
+    
+    output_file = config.get("OUTPUT_FILE", "ip.txt")
+    
+    try:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            for line in output_lines:
+                f.write(line + '\n')
+        
+        print(f"\n✓ 结果已保存到: {output_file}")
+    except Exception as e:
+        print(f"\n✗ 保存文件失败: {e}")
+    
+    notification_content = f"""🌍 Cloudflare IP优选完成
+⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+📊 测试节点: {total_nodes}
+✅ 可用节点: {len(tcp_test_results)}
+🏆 优选节点: {len(best_nodes)}
+⚡ 最高带宽: {best_nodes[0][1]:.2f} Mbps (如果存在)
+📍 最低延迟: {min([l for _, _, l in best_nodes]):.2f} ms (如果存在)"""
+    
+    send_wxpusher_notification(notification_content)
+    
+    update_cloudflare_dns(best_nodes)
+    
+    sync_to_github(output_file)
+    
+    elapsed_time = time.time() - start_time
+    print(f"\n{'='*70}")
+    print(f"✓ 全部完成！总耗时: {elapsed_time:.1f}秒")
+    print(f"{'='*70}")
 
 if __name__ == "__main__":
     main()
