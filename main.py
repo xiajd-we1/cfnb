@@ -535,14 +535,21 @@ def main():
         print(f"\n✅ 带宽测试完成！耗时 {t3:.1f}秒")
         print(f"   有效率: {bw_valid}/{total_bw} ({bw_valid_rate:.1f}%)\n")
 
-        # 综合排序：带宽优先，延迟次之
-        # 排序规则：带宽降序，带宽相同时延迟升序
-        bw_results.sort(key=lambda x: (-x[2], x[1]))
+        # 智能降级：如果带宽测试成功率太低（<10%），使用TCP排序
+        if bw_valid_rate < 10:
+            print(f"⚠️ 带宽测试成功率过低({bw_valid_rate:.1f}%)，降级使用TCP延迟排序\n")
+            tcp_results.sort(key=lambda x: x[1])
+            candidates = [(node, lat, 0) for node, lat in tcp_results[:1000]]
+            print(f"✅ 使用TCP延迟排序，选择前 {len(candidates)} 个节点\n")
+        else:
+            # 综合排序：带宽优先，延迟次之
+            # 排序规则：带宽降序，带宽相同时延迟升序
+            bw_results.sort(key=lambda x: (-x[2], x[1]))
 
-        # 选择前1000个最优质节点
-        top_n = 1000
-        candidates = bw_results[:top_n]
-        print(f"✅ 综合排序完成！选择前 {len(candidates)} 个优质节点进行地区检测\n")
+            # 选择前1000个最优质节点
+            top_n = 1000
+            candidates = bw_results[:top_n]
+            print(f"✅ 综合排序完成！选择前 {len(candidates)} 个优质节点进行地区检测\n")
 
     # ====== 步骤4：地区与纯净度检测（前1000优质节点）======
     print("=" * 70)
@@ -586,21 +593,51 @@ def main():
     print(f"\n✅ 地区检测完成！耗时 {t5:.1f}秒")
     print(f"   成功率: {len(enriched)}/{total_api} ({api_rate:.1f}%)\n")
 
-    # ====== 步骤5：输出前500个到订阅文件 ======
+    # ====== 步骤5：输出前500个到订阅文件（自动补满机制）======
     print("=" * 70)
     print("[步骤5] 保存结果到 ip.txt（输出前500个优质节点）")
     print("=" * 70)
 
     output_file = config.get("OUTPUT_FILE", "ip.txt")
-    
-    # 确保输出500个节点
-    final_output = enriched[:500]
+
+    TARGET_COUNT = 500  # 目标输出数量
+
+    # 获取已成功检测的节点
+    final_output = list(enriched[:TARGET_COUNT])
+
+    # 补满机制：如果不足500个，从candidates中用原始格式补充
+    if len(final_output) < TARGET_COUNT:
+        shortage = TARGET_COUNT - len(final_output)
+        print(f"\n⚠️ 检测成功节点不足{TARGET_COUNT}个（当前: {len(final_output)}），自动补充 {shortage} 个")
+
+        # 从candidates中获取还未加入的节点
+        enriched_set = set(final_output)
+        supplement_count = 0
+
+        for node, latency, speed in candidates:
+            if len(final_output) >= TARGET_COUNT:
+                break
+
+            # 使用原始格式：ip:port#未知#50
+            m = NODE_PATTERN.match(node)
+            if m:
+                ip = m.group(1)
+                port = m.group(2)
+                fallback_format = f"{ip}:{port}#未知#50"
+
+                if fallback_format not in enriched_set:
+                    final_output.append(fallback_format)
+                    enriched_set.add(fallback_format)
+                    supplement_count += 1
+
+        print(f"✅ 成功补充 {supplement_count} 个节点，总计: {len(final_output)} 个")
 
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(final_output) + '\n')
 
     print(f"\n✅ 已保存 {len(final_output)} 个优质节点到 {output_file}")
-    print(f"   格式: ip:端口#地区中文#纯净度\n")
+    print(f"   格式: ip:端口#地区中文#纯净度")
+    print(f"   ✅ 确保输出达到目标数量: {len(final_output)}/{TARGET_COUNT}\n")
 
     if final_output:
         print("前20个样本:")
