@@ -129,6 +129,51 @@ def load_config():
 config = load_config()
 
 NODE_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+):(\d+)')
+IP_ONLY_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+)$')
+IP_COUNTRY_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+)#(\w+)$')
+CSV_IP_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+),(\d+),')
+
+def parse_node_from_line(line):
+    """
+    从一行文本中解析IP节点，支持多种格式：
+    1. ip:port（标准格式）
+    2. 纯IP（自动添加默认端口443）
+    3. ip#country_code（自动添加默认端口443）
+    4. CSV格式：ip,port,...（提取IP和端口）
+    
+    返回: (ip, port) 或 None
+    """
+    line = line.strip()
+    
+    if not line or line.startswith('#'):
+        return None
+    
+    # 格式1: ip:port
+    match = NODE_PATTERN.match(line)
+    if match:
+        return (match.group(1), int(match.group(2)))
+    
+    # 格式2: 纯IP
+    match = IP_ONLY_PATTERN.match(line)
+    if match:
+        return (match.group(1), 443)  # 默认HTTPS端口
+    
+    # 格式3: ip#country
+    match = IP_COUNTRY_PATTERN.match(line)
+    if match:
+        return (match.group(1), 443)  # 默认HTTPS端口
+    
+    # 格式4: CSV - ip,port,...
+    match = CSV_IP_PATTERN.match(line)
+    if match:
+        try:
+            port = int(match.group(2))
+            if 1 <= port <= 65535:
+                return (match.group(1), port)
+        except:
+            pass
+    
+    return None
 
 class AsyncConcurrencyManager:
     """高性能异步并发管理器 - 支持自动调节并发数"""
@@ -678,13 +723,10 @@ def fetch_ip_list():
                 valid_count = 0
                 
                 for line in lines:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    
-                    match = NODE_PATTERN.match(line)
-                    if match:
-                        node = f"{match.group(1)}:{match.group(2)}"
+                    result = parse_node_from_line(line)
+                    if result:
+                        ip, port = result
+                        node = f"{ip}:{port}"
                         nodes_from_source.append(node)
                         valid_count += 1
                 
