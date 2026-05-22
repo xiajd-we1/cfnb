@@ -784,6 +784,20 @@ def test_tcp_connection(ip, port, timeout=None):
     except Exception as e:
         return False, None
 
+def test_tcp_connection_with_retry(ip, port, max_retries=2, timeout=None):
+    """带重试机制的TCP连接测试"""
+    for attempt in range(max_retries + 1):
+        success, latency = test_tcp_connection(ip, port, timeout)
+        
+        if success:
+            return True, latency
+        
+        # 如果不是最后一次，等待后重试
+        if attempt < max_retries:
+            time.sleep(0.1)  # 短暂等待100ms
+    
+    return False, None
+
 def test_availability(ip, port):
     """通过外部API测试IP可用性"""
     api_url = config.get("AVAILABILITY_CHECK_API", "")
@@ -1194,15 +1208,18 @@ def main():
     total_nodes = len(nodes)
     tested = 0
     
-    print(f"\n开始TCP连接测试（共 {total_nodes} 个节点）...")
+    # 优化：降低并发数，增加成功率
+    tcp_workers = min(config.get("MAX_WORKERS", 300), 100)  # 最大100并发
+    
+    print(f"\n开始TCP连接测试（共 {total_nodes} 个节点，并发数: {tcp_workers}）...")
     print("-" * 60)
     
     batch_size = 500
     for i in range(0, total_nodes, batch_size):
         batch = nodes[i:i + batch_size]
         
-        with ThreadPoolExecutor(max_workers=config.get("MAX_WORKERS", 300)) as executor:
-            future_to_node = {executor.submit(test_tcp_connection, 
+        with ThreadPoolExecutor(max_workers=tcp_workers) as executor:
+            future_to_node = {executor.submit(test_tcp_connection_with_retry, 
                                            NODE_PATTERN.match(n).group(1), 
                                            NODE_PATTERN.match(n).group(2)): n 
                             for n in batch}
