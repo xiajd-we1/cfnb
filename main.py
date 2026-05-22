@@ -1185,15 +1185,24 @@ def main():
     print(f"TCP测试完成！可用节点: {len(tcp_test_results)}/{total_nodes}\n")
     
     if not tcp_test_results:
-        print("✗ 所有节点均不可达，程序退出")
-        return
-    
-    tcp_test_results.sort(key=lambda x: x[1])
-    
-    candidates_count = config.get("BANDWIDTH_CANDIDATES", 1000)
-    candidates = tcp_test_results[:candidates_count]
-    
-    print(f"选择前 {len(candidates)} 个节点进行带宽测试\n")
+        success_rate = len(tcp_test_results) / total_nodes if total_nodes > 0 else 0
+        
+        if success_rate < 0.01:
+            print("⚠ TCP连接测试全部失败，但继续使用原始节点进行后续检测")
+            print(f"  原因可能是：网络限制、端口不通、或超时时间过短\n")
+            
+            candidates = [(node, float('inf')) for node in nodes[:config.get("BANDWIDTH_CANDIDATES", 1000)]]
+            print(f"选择前 {len(candidates)} 个原始节点进行带宽测试\n")
+        else:
+            print("✗ 所有节点均不可达，程序退出")
+            return
+    else:
+        tcp_test_results.sort(key=lambda x: x[1])
+        
+        candidates_count = config.get("BANDWIDTH_CANDIDATES", 1000)
+        candidates = tcp_test_results[:candidates_count]
+        
+        print(f"选择前 {len(candidates)} 个节点进行带宽测试\n")
     
     if config.get("ENABLE_REAL_LOCATION_DETECT", True) and config.get("ENABLE_RISK_SCORE", True):
         print("=" * 70)
