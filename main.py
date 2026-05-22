@@ -263,8 +263,10 @@ def fetch_from_source(source_info):
         return []
 
 def fetch_nodes():
-    """从多个数据源获取节点"""
+    """从多个数据源获取节点（增强版：多级去重）"""
     all_nodes = set()
+    ip_node_map = {}  # IP -> 最佳节点映射
+    duplicate_count = 0
     
     data_sources = cfg.get("DATA_SOURCES", [])
     
@@ -279,12 +281,24 @@ def fetch_nodes():
         
         for future in as_completed(futures):
             nodes = future.result()
-            all_nodes.update(nodes)
+            for node in nodes:
+                m = NODE_PATTERN.match(node)
+                if m:
+                    ip = m.group(1)
+                    if ip in ip_node_map:
+                        duplicate_count += 1
+                    else:
+                        ip_node_map[ip] = node
+                all_nodes.add(node)
+    
+    unique_by_ip = list(ip_node_map.values())
     
     print("=" * 60)
-    print(f"总计获取 {len(all_nodes)} 个唯一节点\n")
+    print(f"原始节点: {len(all_nodes)} 个")
+    print(f"IP去重后: {len(unique_by_ip)} 个 (去除 {duplicate_count} 个重复IP)")
+    print(f"\n总计获取 {len(unique_by_ip)} 个唯一IP节点\n")
     
-    if not all_nodes:
+    if not unique_by_ip:
         print("[ERROR] 未获取到任何节点，退出程序。")
         send_wxpusher_notification(
             content="从所有数据源均未获取到节点",
@@ -292,7 +306,7 @@ def fetch_nodes():
         )
         sys.exit(1)
     
-    return list(all_nodes)
+    return unique_by_ip
 
 def test_tcp_latency(ip, port, timeout=TIMEOUT, probes=TCP_PROBES):
     min_latency = float("inf")
@@ -858,6 +872,24 @@ def main():
 
         print("\n================ 最终优选节点 ================")
         speed_map = {node: speed for node, speed in bw_results}
+        
+        final_unique = []
+        seen_ips = set()
+        dup_removed = 0
+        
+        for node in final_selected:
+            ip = node.split(':')[0] if ':' in node else node
+            if ip not in seen_ips:
+                seen_ips.add(ip)
+                final_unique.append(node)
+            else:
+                dup_removed += 1
+        
+        if dup_removed > 0:
+            print(f"[INFO] 最终输出去除 {dup_removed} 个重复IP")
+        
+        final_selected = final_unique
+        
         for i, node in enumerate(final_selected, 1):
             speed = speed_map.get(node, 0)
             lat_sec = latency_map.get(node, float('inf'))
@@ -869,7 +901,7 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for node_str in final_selected:
             f.write(node_str + "\n")
-    print(f"\n结果已保存到 {OUTPUT_FILE}（共 {len(final_selected)} 个节点）")
+    print(f"\n结果已保存到 {OUTPUT_FILE}（共 {len(final_selected)} 个唯一IP节点）")
 
     ip_list = []
     try:
