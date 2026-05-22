@@ -3,11 +3,12 @@ import json
 from datetime import datetime
 import time
 import sys
+import os
 
-GITHUB_TOKEN = "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN")
 REPO_OWNER = "xiajd-we1"
 REPO_NAME = "cfnb"
-WORKFLOW_ID = "update-ip.yml"
+WORKFLOW_ID = "280559335"
 
 def trigger_workflow():
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/workflows/{WORKFLOW_ID}/dispatches"
