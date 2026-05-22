@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP节点检测工具 - 完整版 v3.0
-功能：
-1. 多格式IP解析（ip:port、纯IP、CSV）
-2. TCP连接测试
-3. 带宽速度测试
-4. 地区位置检测（多API策略）
-5. 纯净度评估
-输出格式：ip:端口#地区中文#纯净度
+IP节点检测工具 - 完整版 v4.0
+策略优化：全量解析 → 去重 → TCP全测 → 前300 → 地区检测 → 输出
 """
 
 import re
@@ -19,7 +13,6 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-# ========== 配置 ==========
 CONFIG_FILE = "config.json"
 
 def load_config():
@@ -40,16 +33,29 @@ CSV_IP_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+),(\d+)')
 def parse_node_from_line(line):
     """从一行文本中解析IP节点，支持多种格式"""
     line = line.strip()
-    
-    if not line or line.startswith('#'):
+
+    if not line or line.startswith('#') or line.startswith('线路名称'):
         return None
-    
-    # 格式1: ip:port
+
+    # 跳过纯域名行（没有数字、没有冒号、没有井号、没有逗号）
+    if '.' in line and not re.match(r'^\d+\.\d+\.\d+\.\d+', line):
+        if not any(c in line for c in ':#,') and not re.search(r'\d', line):
+            return None
+
+    # 格式1: ip:port（可能带#注释）
     match = NODE_PATTERN.match(line)
     if match:
         return (match.group(1), int(match.group(2)))
-    
-    # 格式2: CSV - ip,port,...
+
+    # 格式2: ip:port#xxx（如 43.168.16.112:443#HK [高速]）
+    if ':' in line and '#' in line:
+        parts = line.split('#')
+        ip_port = parts[0].strip()
+        match = NODE_PATTERN.match(ip_port)
+        if match:
+            return (match.group(1), int(match.group(2)))
+
+    # 格式3: CSV - ip,port,...
     match = CSV_IP_PATTERN.match(line)
     if match:
         try:
@@ -58,15 +64,28 @@ def parse_node_from_line(line):
                 return (match.group(1), port)
         except:
             pass
-    
-    # 格式3: 纯IP（自动添加443端口）
-    match = IP_ONLY_PATTERN.match(line)
-    if match:
-        return (match.group(1), 443)
-    
+
+    # 格式4: 纯IP 或 ip#xxx（提取IP部分）
+    parts = line.split('#')
+    ip_part = parts[0].strip()
+
+    # 检查是否是有效IP
+    ip_match = IP_ONLY_PATTERN.match(ip_part)
+    if ip_match:
+        return (ip_match.group(1), 443)  # 默认端口443
+
+    # 格式5: CSV格式（跳过表头，第2列可能是IP）
+    csv_parts = line.split(',')
+    if len(csv_parts) >= 2:
+        for col in csv_parts[1:3]:  # 检查第2、3列
+            potential_ip = col.strip()
+            ip_match = IP_ONLY_PATTERN.match(potential_ip)
+            if ip_match:
+                return (ip_match.group(1), 443)
+
     return None
 
-# ========== API函数（多API策略）==========
+# ========== API函数 ==========
 
 def get_ip_location(ip):
     """获取IP的地理位置信息（多API自动切换）"""
@@ -132,7 +151,6 @@ def get_ip_location(ip):
 # ========== 测试函数 ==========
 
 def test_tcp_connection(ip, port, timeout=10):
-    """测试TCP连接"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
@@ -155,7 +173,6 @@ def test_tcp_connection(ip, port, timeout=10):
         return False, None
 
 def test_tcp_with_retry(ip, port, max_retries=3, timeout=10):
-    """带重试机制的TCP测试"""
     for attempt in range(max_retries + 1):
         success, latency = test_tcp_connection(ip, port, timeout)
         if success:
@@ -166,46 +183,9 @@ def test_tcp_with_retry(ip, port, max_retries=3, timeout=10):
     
     return False, None
 
-def measure_bandwidth(ip, port, timeout=8):
-    """测量带宽（简化版）"""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect((ip, port))
-        
-        request = b"GET /__down?bytes=1048576 HTTP/1.1\r\nHost: speed.cloudflare.com\r\nConnection: close\r\n\r\n"
-        sock.sendall(request)
-        
-        start_time = time.time()
-        total_bytes = 0
-        
-        while True:
-            data = sock.recv(8192)
-            if not data:
-                break
-            total_bytes += len(data)
-            
-            if time.time() - start_time > timeout:
-                break
-        
-        sock.close()
-        
-        elapsed = time.time() - start_time
-        
-        if total_bytes > 0 and elapsed > 0:
-            bandwidth_bps = (total_bytes * 8) / elapsed
-            bandwidth_mbps = bandwidth_bps / 1000000
-            return bandwidth_mbps
-        
-        return 0
-    
-    except Exception as e:
-        return 0
-
-# ========== 数据获取（完整版）==========
+# ========== 数据获取 ==========
 
 def fetch_all_nodes():
-    """从所有数据源获取IP节点列表（支持多格式）"""
     all_nodes = set()
     data_sources = config.get("DATA_SOURCES", [])
     
@@ -226,7 +206,6 @@ def fetch_all_nodes():
             continue
         
         print(f"\n[{idx}/{len(enabled_sources)}] {name}")
-        print(f"  URL: {url}")
         
         max_retries = 3
         
@@ -248,7 +227,10 @@ def fetch_all_nodes():
                         all_nodes.add(node)
                         count += 1
                 
-                print(f"✅ 获取 {count} 个节点")
+                if count > 0:
+                    print(f"✅ 获取 {count} 个节点")
+                else:
+                    print(f"⚠️ 无有效IP（可能为域名列表或其他格式）")
                 break
                 
             except Exception as e:
@@ -266,7 +248,6 @@ def fetch_all_nodes():
 # ========== 核心检测函数 ==========
 
 def detect_single_node(node):
-    """检测单个节点（返回新格式或None）"""
     match = NODE_PATTERN.match(node)
     if not match:
         return None
@@ -288,11 +269,11 @@ def main():
     start_time = time.time()
     
     print("=" * 70)
-    print("🚀 IP节点检测工具 - 完整版 v3.0")
+    print("🚀 IP节点检测工具 - v4.0（策略优化版）")
     print("=" * 70)
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     
-    # ====== 步骤1：获取IP列表 ======
+    # ====== 步骤1：获取并去重 ======
     print("[步骤1] 获取IP节点列表...")
     nodes = fetch_all_nodes()
     
@@ -300,21 +281,31 @@ def main():
         print("❌ 无法获取节点列表")
         return
     
-    print(f"✅ 成功获取 {len(nodes)} 个节点\n")
+    print(f"✅ 成功获取 {len(nodes)} 个唯一节点\n")
     
-    # 选择要测试的节点
-    max_test = min(config.get("GLOBAL_TOP_N", 300), len(nodes))
-    test_nodes = nodes[:max_test]
-    
-    # ====== 步骤2：TCP连接测试 ======
+    # ====== 步骤2：全量TCP测试 ======
     print("=" * 70)
-    print("[步骤2] TCP连接测试")
+    print("[步骤2] TCP连接测试（全量检测）")
     print("=" * 70)
     
     tcp_timeout = config.get("TIMEOUT", 10)
-    tcp_workers = 50
     
-    print(f"\n并发数: {tcp_workers} | 超时: {tcp_timeout}秒 | 测试节点: {len(test_nodes)}\n")
+    # 根据节点数量动态调整并发数和测试数量
+    total_nodes = len(nodes)
+    
+    if total_nodes > 5000:
+        test_count = 3000  # 最多测试3000个
+        tcp_workers = 80
+    elif total_nodes > 1000:
+        test_count = min(2000, total_nodes)
+        tcp_workers = 60
+    else:
+        test_count = total_nodes
+        tcp_workers = 50
+    
+    test_nodes = nodes[:test_count]
+    
+    print(f"\n总节点: {total_nodes} | 测试节点: {test_count} | 并发: {tcp_workers} | 超时: {tcp_timeout}s\n")
     
     tcp_results = []
     t0 = time.time()
@@ -343,7 +334,7 @@ def main():
             
             done += 1
             
-            if done % 100 == 0 or done == total:
+            if done % 200 == 0 or done == total:
                 pct = done * 100 // total
                 rate = done / (time.time() - t0) if (time.time() - t0) > 0 else 0
                 print(f"  进度: {done}/{total} ({pct}%) | TCP成功: {len(tcp_results)} | {rate:.1f}/s")
@@ -356,15 +347,17 @@ def main():
     
     if not tcp_results:
         print("⚠️ TCP全部失败，使用原始节点继续...\n")
-        candidates = [(node, float('inf')) for node in test_nodes[:300]]
+        candidates = [(node, float('inf')) for node in nodes[:300]]
     else:
+        # 按延迟排序，选择前300个最快节点
         tcp_results.sort(key=lambda x: x[1])
-        candidates = tcp_results[:300]
-        print(f"✅ 选择前 {len(candidates)} 个最快节点\n")
+        top_n = 300
+        candidates = tcp_results[:top_n]
+        print(f"✅ 选择前 {len(candidates)} 个最快节点进行地区检测\n")
     
     # ====== 步骤3：地区与纯净度检测 ======
     print("=" * 70)
-    print("[步骤3] 地区与纯净度检测")
+    print("[步骤3] 地区与纯净度检测（前300优质节点）")
     print("=" * 70)
     
     candidate_nodes = [node for node, _ in candidates]
@@ -393,7 +386,7 @@ def main():
             
             done += 1
             
-            if done % 50 == 0 or done == total_api:
+            if done % 30 == 0 or done == total_api:
                 pct = done * 100 // total_api
                 rate = done / (time.time() - t2) if (time.time() - t2) > 0 else 0
                 print(f"  进度: {done}/{total_api} ({pct}%) | 成功: {len(enriched)} | {rate:.1f}/s")
@@ -404,56 +397,9 @@ def main():
     print(f"\n✅ 地区检测完成！耗时 {t3:.1f}秒")
     print(f"   成功率: {len(enriched)}/{total_api} ({api_rate:.1f}%)\n")
     
-    # ====== 步骤4：带宽测试（可选）=====
-    if tcp_results and len(enriched) > 10:
-        print("=" * 70)
-        print("[步骤4] 带宽测试（前20个最快节点）")
-        print("=" * 70)
-        
-        bw_test_nodes = enriched[:min(20, len(enriched))]
-        bw_workers = 10
-        bw_timeout = 8
-        
-        print(f"\n并发数: {bw_workers} | 超时: {bw_timeout}秒\n")
-        
-        bw_results = []
-        t4 = time.time()
-        
-        with ThreadPoolExecutor(max_workers=bw_workers) as executor:
-            futures = {}
-            for node in bw_test_nodes:
-                m = NODE_PATTERN.match(node)
-                if m:
-                    ip = m.group(1)
-                    port = int(m.group(2))
-                    future = executor.submit(measure_bandwidth, ip, port, timeout=bw_timeout)
-                    futures[future] = node
-            
-            for future in as_completed(futures):
-                node = futures[future]
-                try:
-                    bw = future.result()
-                    if bw and bw > 0:
-                        bw_results.append((node, bw))
-                except:
-                    pass
-        
-        t5 = time.time() - t4
-        
-        print(f"\n✅ 带宽测试完成！耗时 {t5:.1f}秒")
-        print(f"   有效结果: {len(bw_results)}/20\n")
-        
-        if bw_results:
-            bw_results.sort(key=lambda x: -x[1])
-            print("Top 5 带宽节点:")
-            for i, (node, bw) in enumerate(bw_results[:5], 1):
-                parts = node.split('#')
-                if len(parts) >= 3:
-                    print(f"  [{i}] {parts[0]:<25s} #{parts[1]} | {bw:.2f} Mbps")
-    
-    # ====== 步骤5：保存结果 ======
-    print("\n" + "=" * 70)
-    print("[步骤5] 保存结果到 ip.txt")
+    # ====== 步骤4：保存结果到订阅链接 ======
+    print("=" * 70)
+    print("[步骤4] 保存结果到 ip.txt（订阅文件）")
     print("=" * 70)
     
     output_file = config.get("OUTPUT_FILE", "ip.txt")
@@ -461,12 +407,12 @@ def main():
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(enriched) + '\n')
     
-    print(f"\n✅ 已保存 {len(enriched)} 个节点到 {output_file}")
+    print(f"\n✅ 已保存 {len(enriched)} 个优质节点到 {output_file}")
     print(f"   格式: ip:端口#地区中文#纯净度\n")
     
     if enriched:
-        print("前15个样本:")
-        for i, line in enumerate(enriched[:15], 1):
+        print("前20个样本:")
+        for i, line in enumerate(enriched[:20], 1):
             parts = line.split('#')
             if len(parts) >= 3:
                 print(f"  [{i:2d}] {parts[0]:<25s} #{parts[1]} #{parts[2]}")
@@ -477,10 +423,10 @@ def main():
     print(f"\n{'='*70}")
     print("📊 运行统计")
     print("="*70)
-    print(f"  数据源节点: {len(nodes)}")
+    print(f"  数据源总数: {len(nodes)} 个唯一节点")
     print(f"  TCP测试: {tcp_rate:.1f}% ({len(tcp_results)}/{total})")
     print(f"  地区检测: {api_rate:.1f}% ({len(enriched)}/{total_api})")
-    print(f"  最终输出: {len(enriched)} 个节点")
+    print(f"  最终输出: {len(enriched)} 个优质节点")
     print(f"  总耗时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
     print(f"  完成: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)

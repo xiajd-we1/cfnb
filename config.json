@@ -135,9 +135,19 @@
       "name": "Wwuyi123-proxyip-country"
     },
     {
-      "url": "https://raw.githubusercontent.com/hofccyf/myip/main/sg.txt",
+      "url": "https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/best_ips.txt",
       "enabled": true,
-      "name": "hofccyf-sg"
+      "name": "HandsomeMJZ-best-ips"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cf.txt",
+      "enabled": true,
+      "name": "yuanxiawan-cf"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.csv",
+      "enabled": true,
+      "name": "yuanxiawan-cfip-csv"
     }
   ],
   "ENABLE_REAL_LOCATION_DETECT": true,
