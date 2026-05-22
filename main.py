@@ -87,6 +87,50 @@ def parse_node_from_line(line):
 
     return None
 
+# ========== HTML解析函数（用于网页数据源）==========
+
+def extract_ips_from_html(html_content):
+    """从HTML内容中提取IP地址"""
+    import re
+
+    ips_found = set()
+
+    # 匹配IPv4地址的正则
+    ip_pattern = re.compile(r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b')
+
+    # 查找所有IP地址
+    all_ips = ip_pattern.findall(html_content)
+
+    for ip in all_ips:
+        # 排除明显不是Cloudflare IP的地址段
+        first_octet = int(ip.split('.')[0])
+        if first_octet in [0, 127, 192, 10, 172]:  # 排除本地/私有IP
+            continue
+
+        # 默认端口443
+        ips_found.add(f"{ip}:443")
+
+    return list(ips_found)
+
+def fetch_html_source(url, name):
+    """从HTML网页数据源提取IP"""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+
+        resp = requests.get(url, headers=headers, timeout=(5, 15), allow_redirects=True)
+        resp.raise_for_status()
+
+        html_content = resp.text
+        ips = extract_ips_from_html(html_content)
+
+        return ips
+
+    except Exception as e:
+        print(f"  ❌ HTML解析失败: {str(e)[:50]}")
+        return []
+
 # ========== API函数 ==========
 
 def get_ip_location(ip):
@@ -257,6 +301,7 @@ def fetch_all_nodes():
     for idx, source in enumerate(enabled_sources, 1):
         url = source.get("url", "")
         name = source.get("name", f"数据源{idx}")
+        source_type = source.get("type", "text")  # 默认为文本类型
 
         if not url:
             continue
@@ -269,24 +314,40 @@ def fetch_all_nodes():
             try:
                 print(f"  尝试 {attempt+1}/{max_retries}...", end=" ")
 
-                resp = requests.get(url, timeout=(5, 15), allow_redirects=True)
-                resp.raise_for_status()
+                # 根据数据源类型选择解析方式
+                if source_type == "html":
+                    # HTML网页数据源
+                    ips = fetch_html_source(url, name)
+                    count = len(ips)
 
-                lines = resp.text.strip().split('\n')
-                count = 0
-
-                for line in lines:
-                    result = parse_node_from_line(line)
-                    if result:
-                        ip, port = result
-                        node = f"{ip}:{port}"
+                    for node in ips:
                         all_nodes.add(node)
-                        count += 1
 
-                if count > 0:
-                    print(f"✅ 获取 {count} 个节点")
+                    if count > 0:
+                        print(f"✅ HTML解析获取 {count} 个节点")
+                    else:
+                        print(f"⚠️ HTML中未找到有效IP")
                 else:
-                    print(f"⚠️ 无有效IP（可能为域名列表或其他格式）")
+                    # 默认文本数据源
+                    resp = requests.get(url, timeout=(5, 15), allow_redirects=True)
+                    resp.raise_for_status()
+
+                    lines = resp.text.strip().split('\n')
+                    count = 0
+
+                    for line in lines:
+                        result = parse_node_from_line(line)
+                        if result:
+                            ip, port = result
+                            node = f"{ip}:{port}"
+                            all_nodes.add(node)
+                            count += 1
+
+                    if count > 0:
+                        print(f"✅ 获取 {count} 个节点")
+                    else:
+                        print(f"⚠️ 无有效IP（可能为域名列表或其他格式）")
+
                 break
 
             except Exception as e:

@@ -75,6 +75,18 @@
       "name": "joname1-BestCFip"
     },
     {
+      "url": "https://api.uouin.com/cloudflare.html",
+      "enabled": true,
+      "name": "uouin-CF优选IP",
+      "type": "html"
+    },
+    {
+      "url": "https://ip.164746.xyz/",
+      "enabled": true,
+      "name": "164746-CF优选IP",
+      "type": "html"
+    },
+    {
       "url": "https://raw.githubusercontent.com/xxzh72/yxym/main/ip.txt",
       "enabled": true,
       "name": "xxzh72-ip"
