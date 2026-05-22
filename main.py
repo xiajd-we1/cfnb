@@ -603,18 +603,43 @@ def enrich_node_with_real_info(node, timeout=5):
         real_location_parts.append(city)
     real_location = " ".join(real_location_parts) if real_location_parts else (display_country if display_country else "未知")
     
-    # 风控等级判断
-    if risk_score >= 0:
-        if risk_score <= 15:
-            risk_level = "纯净"
-        elif risk_score <= 30:
-            risk_level = "低"
-        elif risk_score <= 60:
-            risk_level = "中"
-        else:
-            risk_level = "高"
+    # 风控等级判断 - 参考iping.cc网站标准
+    # 注意：API的risk_score和网站的显示百分比不同
+    # 网站会综合考虑：risk_score + is_proxy + usage_type + risk_tag等
+    
+    # 获取风险标签用于辅助判断
+    risk_tag = iping_info.get("risk_tag", "") if iping_info else ""
+    
+    # 综合风控评估逻辑：
+    # 1. 如果是代理/数据中心IP，基础风险较高
+    # 2. 如果有风险标签（如"疑似翻墙服务"），风险等级提升
+    # 3. 最终参考网站显示的百分比范围
+    
+    base_risk = risk_score if risk_score >= 0 else 50  # 默认中等风险
+    
+    # 根据IP类型调整风险值
+    if is_proxy == "是":
+        base_risk += 20  # 代理IP增加20分
+    if usage_type == "数据中心":
+        base_risk += 10  # 数据中心IP增加10分
+    if "翻墙" in risk_tag or "代理" in risk_tag or "VPN" in risk_tag.upper():
+        base_risk += 25  # 特殊风险标签增加25分
+    
+    # 限制在0-100范围
+    adjusted_risk = min(100, max(0, base_risk))
+    
+    # 根据调整后的风险值判断等级（参考iping.cc网站标准）
+    if adjusted_risk <= 20:
+        risk_level = "纯净"
+    elif adjusted_risk <= 40:
+        risk_level = "低风险"
+    elif adjusted_risk <= 70:
+        risk_level = "中风险"
     else:
-        risk_level = "未知"
+        risk_level = "高风险"
+    
+    # 使用调整后的风险值作为显示值
+    final_risk_score = adjusted_risk if (is_proxy == "是" or usage_type == "数据中心") else risk_score
     
     # 构建详细信息
     enriched_info = {
@@ -629,7 +654,7 @@ def enrich_node_with_real_info(node, timeout=5):
         "region": region,
         "organization": organization,
         "as_name": as_name,
-        "risk_score": risk_score,
+        "risk_score": final_risk_score,
         "risk_level": risk_level,
         "is_proxy": is_proxy,
         "usage_type": usage_type,
@@ -640,7 +665,7 @@ def enrich_node_with_real_info(node, timeout=5):
     
     # 新格式：IP:端口#真实地区编码或中文名#风控值
     output_country = country_code if country_code else country_cn
-    new_node = f"{ip}:{port}#{output_country}#{risk_score}"
+    new_node = f"{ip}:{port}#{output_country}#{final_risk_score}"
     
     return new_node, enriched_info
 
