@@ -230,21 +230,34 @@ def measure_bandwidth(ip, port=443, timeout=10, size_mb=0.5):
 
 # ========== 地区检测 ==========
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 def get_ip_location(ip):
-    apis = [
-        ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh"),
-        ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN"),
-        ("ip.sb", f"https://api.ip.sb/geoip/{ip}"),
-    ]
+    is_actions = os.environ.get('GITHUB_ACTIONS', '') == 'true'
+
+    if is_actions:
+        apis = [
+            ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN"),
+            ("ip.sb", f"https://api.ip.sb/geoip/{ip}"),
+            ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh"),
+        ]
+        api_timeout = 5
+    else:
+        apis = [
+            ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh"),
+            ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN"),
+            ("ip.sb", f"https://api.ip.sb/geoip/{ip}"),
+        ]
+        api_timeout = 10
+
     for name, url in apis:
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             if name == "iping.cc":
-                import urllib3
-                urllib3.disable_warnings()
-                resp = requests.get(url, headers=headers, timeout=15, verify=False)
+                resp = requests.get(url, headers=headers, timeout=api_timeout, verify=False)
             else:
-                resp = requests.get(url, headers=headers, timeout=15)
+                resp = requests.get(url, headers=headers, timeout=api_timeout)
             if resp.status_code != 200:
                 continue
             data = resp.json()
