@@ -235,23 +235,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_ip_location(ip):
     is_actions = os.environ.get('GITHUB_ACTIONS', '') == 'true'
+    api_timeout = 5 if is_actions else 8
 
-    if is_actions:
-        apis = [
-            ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN"),
-            ("ip.sb", f"https://api.ip.sb/geoip/{ip}"),
-            ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh"),
-        ]
-        api_timeout = 5
-    else:
-        apis = [
-            ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh"),
-            ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN"),
-            ("ip.sb", f"https://api.ip.sb/geoip/{ip}"),
-        ]
-        api_timeout = 10
+    apis = [
+        ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN", "json"),
+        ("ip.sb", f"https://api.ip.sb/geoip/{ip}", "json"),
+        ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh", "json"),
+        ("ping0.cc", f"https://ping0.cc/ip/{ip}", "html"),
+    ]
 
-    for name, url in apis:
+    for name, url, resp_type in apis:
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             if name == "iping.cc":
@@ -260,20 +253,34 @@ def get_ip_location(ip):
                 resp = requests.get(url, headers=headers, timeout=api_timeout)
             if resp.status_code != 200:
                 continue
-            data = resp.json()
 
-            if name == "iping.cc":
-                if data.get("code") == 200 and data.get("data"):
-                    info = data["data"]
-                    country = info.get("country", "") or ""
-                    country_code = info.get("country_code", "") or info.get("countryCode", "") or ""
-                    region = info.get("region", "") or ""
-                    city = info.get("city", "") or ""
-                    parts = [p for p in [country, region, city] if p]
-                    location = " ".join(parts) if parts else "未知"
-                    return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
+            if resp_type == "json":
+                data = resp.json()
+            elif name == "ping0.cc":
+                html = resp.text
+                risk_match = re.search(r'风控值\s*.*?(\d+)%', html, re.DOTALL)
+                risk = int(risk_match.group(1)) if risk_match else -1
+                loc_match = re.search(r'IP 位置</div>\s*<div[^>]*>([^<]+)', html, re.DOTALL)
+                if not loc_match:
+                    loc_match = re.search(r'IP 位置.*?<[^>]+>([^<]+)', html, re.DOTALL)
+                location = loc_match.group(1).strip() if loc_match else ""
+                ip_type_match = re.search(r'IP 类型.*?(IDC机房|家庭宽带)', html, re.DOTALL)
+                ip_type = ip_type_match.group(1) if ip_type_match else ""
+                proxy_match = re.search(r'代理 IP', html)
+                is_proxy = proxy_match is not None
+                native_match = re.search(r'原生 IP.*?(原生 IP|广播 IP)', html, re.DOTALL)
+                native = native_match.group(1) if native_match else ""
+                if location:
+                    purity = "纯净" if risk < 25 else "中性" if risk < 50 else "风险" if risk < 70 else "高危"
+                    return {
+                        "success": True, "location": location,
+                        "country_code": "XX",
+                        "risk": risk, "ip_type": ip_type,
+                        "is_proxy": is_proxy, "native": native, "purity": purity
+                    }
+                continue
 
-            elif name == "ip-api":
+            if name == "ip-api":
                 if data.get("status") == "success":
                     country = data.get("country", "") or ""
                     country_code = data.get("countryCode", "") or ""
@@ -284,13 +291,27 @@ def get_ip_location(ip):
                     return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
 
             elif name == "ip.sb":
-                country = data.get("country_name", "") or ""
+                country = data.get("country", "") or ""
                 country_code = data.get("country_code", "") or ""
                 region = data.get("region", "") or ""
                 city = data.get("city", "") or ""
+                org = data.get("organization", "") or data.get("isp", "") or ""
                 parts = [p for p in [country, region, city] if p]
                 location = " ".join(parts) if parts else "未知"
+                if org:
+                    location += f" — {org}"
                 return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
+
+            elif name == "iping.cc":
+                if data.get("code") == 200 and data.get("data"):
+                    info = data["data"]
+                    country = info.get("country", "") or ""
+                    country_code = info.get("country_code", "") or info.get("countryCode", "") or ""
+                    region = info.get("region", "") or ""
+                    city = info.get("city", "") or ""
+                    parts = [p for p in [country, region, city] if p]
+                    location = " ".join(parts) if parts else "未知"
+                    return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
 
         except:
             continue
@@ -302,7 +323,7 @@ def main():
     start_time = time.time()
 
     print("=" * 70)
-    print("🚀 IP节点检测工具 - v7.0（全量测试版）")
+    print("🚀 IP节点检测工具 - v7.3（多源检测版）")
     print("=" * 70)
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"流程: 数据源→去重→全量TCP→全量带宽→全量地区→评分排序→前500输出\n")
