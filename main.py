@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP节点检测工具 - v7.0 全量测试版
+IP节点检测工具 - v7.4（多源检测+ASN推断版）
 流程：数据源获取 → 去重 → 全量TCP测试 → 全量带宽测试 → 全量地区检测 → 评分排序 → 前500输出(50香港)
 格式：ip:端口#地区名称
 """
@@ -26,7 +26,7 @@ def load_config():
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        print(f"⚠️ 配置文件加载失败: {e}")
+        print(f"[WARN] 配置文件加载失败: {e}")
         return {}
 
 config = load_config()
@@ -98,7 +98,7 @@ def fetch_html_source(url, name):
         resp.raise_for_status()
         return extract_ips_from_html(resp.text)
     except Exception as e:
-        print(f"  ❌ HTML解析失败: {str(e)[:50]}")
+        print(f"  [FAIL] HTML解析失败: {str(e)[:50]}")
         return []
 
 def fetch_all_nodes():
@@ -106,7 +106,7 @@ def fetch_all_nodes():
     data_sources = config.get("DATA_SOURCES", [])
     enabled_sources = [ds for ds in data_sources if ds.get("enabled", True)]
     if not enabled_sources:
-        print("⚠️ 没有启用的数据源")
+        print("[WARN] 没有启用的数据源")
         return []
 
     print(f"\n开始从 {len(enabled_sources)} 个数据源获取IP...")
@@ -128,9 +128,9 @@ def fetch_all_nodes():
                     for node in ips:
                         all_nodes.add(node)
                     if count > 0:
-                        print(f"✅ HTML解析获取 {count} 个节点")
+                        print(f"[OK] HTML解析获取 {count} 个节点")
                     else:
-                        print(f"⚠️ HTML中未找到有效IP")
+                        print("[WARN] HTML中未找到有效IP")
                 else:
                     resp = requests.get(url, timeout=(5, 15), allow_redirects=True)
                     resp.raise_for_status()
@@ -143,19 +143,19 @@ def fetch_all_nodes():
                             all_nodes.add(f"{ip}:{port}")
                             count += 1
                     if count > 0:
-                        print(f"✅ 获取 {count} 个节点")
+                        print(f"[OK] 获取 {count} 个节点")
                     else:
-                        print(f"⚠️ 无有效IP")
+                        print("[WARN] 无有效IP")
                 break
             except Exception as e:
                 if attempt < 2:
-                    print(f"❌ 失败，重试...")
+                    print("[FAIL] 失败，重试...")
                     time.sleep(2)
                 else:
-                    print(f"❌ 最终失败: {str(e)[:40]}")
+                    print(f"[FAIL] 最终失败: {str(e)[:40]}")
 
     print("\n" + "=" * 70)
-    print(f"✅ 总计获取 {len(all_nodes)} 个唯一节点\n")
+    print(f"[OK] 总计获取 {len(all_nodes)} 个唯一节点\n")
     return list(all_nodes)
 
 # ========== TCP测试 ==========
@@ -241,6 +241,8 @@ def get_ip_location(ip):
         ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN", "json"),
         ("ip.sb", f"https://api.ip.sb/geoip/{ip}", "json"),
         ("iping.cc", f"https://api.iping.cc/v1/query?ip={ip}&language=zh", "json"),
+        ("ipinfo.io", f"https://ipinfo.io/{ip}/json", "json"),
+        ("ipapi.co", f"https://ipapi.co/{ip}/json/", "json"),
         ("ping0.cc", f"https://ping0.cc/ip/{ip}", "html"),
     ]
 
@@ -249,6 +251,8 @@ def get_ip_location(ip):
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             if name == "iping.cc":
                 resp = requests.get(url, headers=headers, timeout=api_timeout, verify=False)
+            elif name == "ipinfo.io":
+                resp = requests.get(url, headers=headers, timeout=api_timeout, params={"token": ""})
             else:
                 resp = requests.get(url, headers=headers, timeout=api_timeout)
             if resp.status_code != 200:
@@ -286,6 +290,9 @@ def get_ip_location(ip):
                     country_code = data.get("countryCode", "") or ""
                     region = data.get("regionName", "") or ""
                     city = data.get("city", "") or ""
+                    isp = data.get("isp", "") or ""
+                    org = data.get("org", "") or ""
+                    as_name = data.get("as", "") or ""
                     parts = [p for p in [country, region, city] if p]
                     location = " ".join(parts) if parts else "未知"
                     return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
@@ -313,9 +320,134 @@ def get_ip_location(ip):
                     location = " ".join(parts) if parts else "未知"
                     return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
 
-        except:
+            elif name == "ipinfo.io":
+                if not data.get("bogon"):
+                    country = data.get("country", "") or ""
+                    region = data.get("region", "") or ""
+                    city = data.get("city", "") or ""
+                    org = data.get("org", "") or ""
+                    hostname = data.get("hostname", "") or ""
+                    parts = [p for p in [country, region, city] if p]
+                    location = " ".join(parts) if parts else "未知"
+                    if org and org != country:
+                        location += f" ({org})"
+                    return {"success": True, "location": location, "country_code": country.upper() if country else "XX"}
+
+            elif name == "ipapi.co":
+                country = data.get("country_name", "") or ""
+                country_code = data.get("country_code", "") or ""
+                region = data.get("region", "") or ""
+                city = data.get("city", "") or ""
+                org = data.get("org", "") or ""
+                parts = [p for p in [country, region, city] if p]
+                location = " ".join(parts) if parts else "未知"
+                if org and org != country:
+                    location += f" — {org}"
+                return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
+
+        except Exception as e:
             continue
+
+    asn_result = infer_location_from_asn(ip)
+    if asn_result:
+        return asn_result
+
     return {"success": False}
+
+ASN_REGION_MAP = {
+    "AS13335": ("美国", "US", "Cloudflare"),
+    "AS209242": ("中国香港", "HK", "Cloudflare CDN"),
+    "AS206286": ("新加坡", "SG", "Cloudflare"),
+    "AS397916": ("日本", "JP", "Cloudflare"),
+    "AS14558": ("韩国", "KR", "Cloudflare"),
+    "AS4808": ("中国", "CN", "China Telecom"),
+    "AS4837": ("中国", "CN", "China Unicom"),
+    "AS4134": ("中国", "CN", "ChinaNet"),
+    "AS9808": ("中国", "CN", "China Mobile"),
+    "AS45090": ("中国香港", "HK", "HGC Global"),
+    "AS4760": ("中国香港", "HK", "HKIX"),
+    "AS18001": ("中国台湾", "TW", "Chunghwa Telecom"),
+    "AS3462": ("中国台湾", "TW", "Data Communication Business Group"),
+    "AS17676": ("日本", "JP", "SoftBank"),
+    "AS2516": ("日本", "JP", "KDDI"),
+    "AS4713": ("韩国", "KR", "Korea Telecom"),
+    "AS4837": ("韩国", "KR", "LG Dacom"),
+    "AS7552": ("越南", "VN", "Viettel"),
+    "AS45899": ("越南", "VN", "VNPT"),
+    "AS38511": ("泰国", "TH", "TOT"),
+    "AS131090": ("印度尼西亚", "ID", "APJII"),
+    "AS174": ("美国", "US", "Cogent"),
+    "AS3257": ("欧洲", "EU", "GTT"),
+    "AS3356": ("美国", "US", "Level 3"),
+    "AS6453": ("加拿大", "CA", "Tata Communications"),
+    "AS12956": ("全球", "GLOBAL", "Telia"),
+    "AS2914": ("日本/美国", "JP/US", "NTT"),
+    "AS3491": ("印度", "IN", "PCCW"),
+    "AS5511": ("法国", "FR", "Orange"),
+    "AS6830": ("德国", "DE", "Liberty Global"),
+    "AS3320": ("德国", "DE", "Deutsche Telekom"),
+    "AS12389": ("俄罗斯", "RU", "Rostelecom"),
+}
+
+def infer_location_from_asn(ip):
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["nslookup", "-type=TXT", f"{ip}.origin.asn.cymru.com", "8.8.8.8"],
+            capture_output=True, text=True, timeout=5
+        )
+        output = result.stdout + result.stderr
+        asn_match = re.search(r'"(\d+)\s+', output)
+        if asn_match:
+            asn = f"AS{asn_match.group(1)}"
+            if asn in ASN_REGION_MAP:
+                country, code, provider = ASN_REGION_MAP[asn]
+                return {
+                    "success": True,
+                    "location": f"{country} ({provider})",
+                    "country_code": code,
+                    "source": "asn_infer"
+                }
+
+            try:
+                headers = {"User-Agent": "Mozilla/5.0"}
+                resp = requests.get(
+                    f"https://stat.ripe.net/data/as-overview/data.json?resource={asn}",
+                    headers=headers, timeout=5
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    holder = data.get("data", {}).get("holder", "")
+                    country = data.get("data", {}).get("country", "")
+                    if country:
+                        country_names = {
+                            "CN": "中国", "HK": "中国香港", "TW": "中国台湾",
+                            "JP": "日本", "KR": "韩国", "SG": "新加坡",
+                            "US": "美国", "GB": "英国", "DE": "德国",
+                            "FR": "法国", "AU": "澳大利亚", "CA": "加拿大",
+                            "IN": "印度", "BR": "巴西", "NL": "荷兰",
+                            "RU": "俄罗斯", "IT": "意大利", "ES": "西班牙",
+                        }
+                        cn_name = country_names.get(country, country)
+                        location = f"{cn_name} ({holder})" if holder else cn_name
+                        return {
+                            "success": True,
+                            "location": location,
+                            "country_code": country,
+                            "source": "asn_ripe"
+                        }
+            except:
+                pass
+
+            return {
+                "success": True,
+                "location": f"未知ASN-{asn}",
+                "country_code": "XX",
+                "source": "asn_raw"
+            }
+    except:
+        pass
+    return None
 
 # ========== 主流程 ==========
 
@@ -323,20 +455,20 @@ def main():
     start_time = time.time()
 
     print("=" * 70)
-    print("🚀 IP节点检测工具 - v7.3（多源检测版）")
+    print("IP节点检测工具 - v7.4（多源检测+ASN推断版）")
     print("=" * 70)
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"流程: 数据源→去重→全量TCP→全量带宽→全量地区→评分排序→前500输出\n")
+    print(f"流程: 数据源->去重->全量TCP->全量带宽->全量地区->评分排序->前500输出\n")
 
     # ====== 步骤1：获取并去重 ======
     print("[步骤1] 获取IP节点列表...")
     nodes = fetch_all_nodes()
     if not nodes:
-        print("❌ 无法获取节点列表")
+        print("[FAIL] 无法获取节点列表")
         return
 
     total_nodes = len(nodes)
-    print(f"✅ 成功获取 {total_nodes} 个唯一节点\n")
+    print(f"[OK] 成功获取 {total_nodes} 个唯一节点\n")
 
     # ====== 步骤2：全量TCP测试 ======
     print("=" * 70)
@@ -385,10 +517,10 @@ def main():
 
     t1 = time.time() - t0
     tcp_rate = len(tcp_results) / total * 100 if total > 0 else 0
-    print(f"\n✅ TCP测试完成！耗时 {t1:.1f}秒 | 成功率: {len(tcp_results)}/{total} ({tcp_rate:.1f}%)\n")
+    print(f"\n[OK] TCP测试完成！耗时 {t1:.1f}秒 | 成功率: {len(tcp_results)}/{total} ({tcp_rate:.1f}%)\n")
 
     if not tcp_results:
-        print("❌ TCP全部失败，程序退出")
+        print("[FAIL] TCP全部失败，程序退出")
         return
 
     # ====== 步骤3：全量带宽测试 ======
@@ -399,7 +531,7 @@ def main():
     bw_results = []
 
     if not shutil.which("curl"):
-        print("⚠️ 未检测到curl，跳过带宽测试，使用TCP延迟排序")
+        print("[WARN] 未检测到curl，跳过带宽测试，使用TCP延迟排序")
         tcp_results.sort(key=lambda x: x[1])
         bw_results = [(node, lat, 0) for node, lat in tcp_results]
     else:
@@ -444,7 +576,7 @@ def main():
 
         t3 = time.time() - t2
         valid_bw = sum(1 for _, _, s in bw_results if s > 0)
-        print(f"\n✅ 带宽测试完成！耗时 {t3:.1f}秒 | 有效: {valid_bw}/{len(bw_results)}\n")
+        print(f"\n[OK] 带宽测试完成！耗时 {t3:.1f}秒 | 有效: {valid_bw}/{len(bw_results)}\n")
 
     # ====== 步骤4：全量地区检测 ======
     print("=" * 70)
@@ -503,7 +635,7 @@ def main():
                 print(f"  进度: {done}/{total_loc} ({pct}%) | 成功: {stats['loc_success']} | {rate:.1f}/s | 耗时:{elapsed:.1f}s")
 
     t5 = time.time() - t4
-    print(f"\n✅ 地区检测完成！耗时 {t5:.1f}秒 | 成功: {stats['loc_success']}/{len(final_data)}\n")
+    print(f"\n[OK] 地区检测完成！耗时 {t5:.1f}秒 | 成功: {stats['loc_success']}/{len(final_data)}\n")
 
     # ====== 步骤5：评分排序 + 输出前500 ======
     print("=" * 70)
@@ -525,7 +657,7 @@ def main():
     hk_items = [x for x in final_data if any(k in x['location'] for k in ['香港', 'HK', 'Hong Kong'])]
     other_items = [x for x in final_data if not any(k in x['location'] for k in ['香港', 'HK', 'Hong Kong'])]
 
-    print(f"\n🇭🇰 香港节点: {len(hk_items)} | 其他地区: {len(other_items)}")
+    print(f"\n[HK] 香港节点: {len(hk_items)} | 其他地区: {len(other_items)}")
 
     output = []
     output.extend(hk_items[:HK_PRIORITY])
@@ -552,7 +684,7 @@ def main():
     # 补满机制
     if len(output_lines) < TARGET:
         shortage = TARGET - len(output_lines)
-        print(f"\n⚠️ 不足{TARGET}个（当前: {len(output_lines)}），补充 {shortage} 个")
+        print(f"\n[WARN] 不足{TARGET}个（当前: {len(output_lines)}），补充 {shortage} 个")
         existing = set(output_lines)
         for item in final_data[len(output):]:
             if len(output_lines) >= TARGET:
@@ -568,9 +700,9 @@ def main():
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(output_lines) + '\n')
 
-    print(f"\n✅ 已保存 {len(output_lines)} 个节点到 {output_file}")
+    print(f"\n[OK] 已保存 {len(output_lines)} 个节点到 {output_file}")
     print(f"   格式: ip:端口#地区名称")
-    print(f"   🇭🇰 香港优先: {min(HK_PRIORITY, len(hk_items))} 个")
+    print(f"   [HK] 香港优先: {min(HK_PRIORITY, len(hk_items))} 个")
 
     if output_lines:
         print(f"\n前20个样本:")
@@ -579,7 +711,7 @@ def main():
 
     total_time = time.time() - start_time
     print(f"\n{'='*70}")
-    print("📊 运行统计")
+    print("[STAT] 运行统计")
     print("="*70)
     print(f"  数据源: {total_nodes} 个唯一节点")
     print(f"  TCP: {stats['tcp_success']}/{stats['tcp_tested']} ({stats['tcp_success']/max(stats['tcp_tested'],1)*100:.1f}%)")
