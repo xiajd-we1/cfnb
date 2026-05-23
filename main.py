@@ -309,9 +309,12 @@ def main():
     print("[步骤2] 全量TCP连接测试")
     print("=" * 70)
 
-    tcp_timeout = config.get("TIMEOUT", 8)
-    tcp_workers = min(200, max(50, total_nodes // 50))
-    print(f"\n总节点: {total_nodes} | 并发: {tcp_workers} | 超时: {tcp_timeout}s\n")
+    is_github_actions = os.environ.get('GITHUB_ACTIONS', '') == 'true'
+
+    tcp_timeout = config.get("TIMEOUT", 5 if is_github_actions else 8)
+    tcp_workers = min(300 if is_github_actions else 200, max(50, total_nodes // 50))
+    tcp_retries = 1 if is_github_actions else 2
+    print(f"\n总节点: {total_nodes} | 并发: {tcp_workers} | 超时: {tcp_timeout}s | 重试: {tcp_retries} | 环境: {'GitHub Actions' if is_github_actions else '本地'}\n")
 
     tcp_results = []
     t0 = time.time()
@@ -323,7 +326,7 @@ def main():
             if m:
                 ip = m.group(1)
                 port = int(m.group(2))
-                futures[executor.submit(test_tcp_with_retry, ip, port, max_retries=2, timeout=tcp_timeout)] = node
+                futures[executor.submit(test_tcp_with_retry, ip, port, max_retries=tcp_retries, timeout=tcp_timeout)] = node
 
         done = 0
         total = len(futures)
@@ -366,9 +369,9 @@ def main():
         tcp_results.sort(key=lambda x: x[1])
         bw_results = [(node, lat, 0) for node, lat in tcp_results]
     else:
-        bw_timeout = config.get("BANDWIDTH_TIMEOUT", 10)
+        bw_timeout = config.get("BANDWIDTH_TIMEOUT", 8 if is_github_actions else 10)
         bw_size_mb = config.get("BANDWIDTH_SIZE_MB", 0.5)
-        bw_workers = min(30, max(10, len(tcp_results) // 100))
+        bw_workers = min(50 if is_github_actions else 30, max(10, len(tcp_results) // 100))
 
         print(f"\n待测节点: {len(tcp_results)} | 并发: {bw_workers} | 超时: {bw_timeout}s | 文件大小: {bw_size_mb}MB\n")
 
@@ -414,7 +417,7 @@ def main():
     print("[步骤4] 全量地区检测")
     print("=" * 70)
 
-    loc_workers = min(100, max(30, len(bw_results) // 50))
+    loc_workers = min(150 if is_github_actions else 100, max(30, len(bw_results) // 50))
     print(f"\n待测节点: {len(bw_results)} | 并发: {loc_workers}\n")
 
     final_data = []
