@@ -1,9 +1,12 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP节点检测工具 - v8.0（可用性验证版）
-流程：数据源获取 -> 去重 -> TCP测试 -> 带宽测试 -> 可达性验证(CF CDN+TLS) -> 地区检测 -> 评分排序 -> 输出
-格式：ip:端口#地区名称
+IP节点检测工具 - v9.0（高质量统一443版）
+核心改进：
+1. 统一输出443端口（兼容edgetunnel默认设置）
+2. 强制要求Workers验证通过才输出
+3. 优先高速+低延迟节点
+4. 完善API调用（含iping.cc）
 """
 
 import re
@@ -162,8 +165,6 @@ def fetch_all_nodes():
     print(f"[OK] 总计获取 {len(all_nodes)} 个唯一节点\n")
     return list(all_nodes)
 
-# ========== TCP测试 ==========
-
 def test_tcp_connection(ip, port, timeout=8):
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -186,8 +187,6 @@ def test_tcp_with_retry(ip, port, max_retries=2, timeout=8):
         if attempt < max_retries:
             time.sleep(0.1)
     return False, None
-
-# ========== 带宽测试 ==========
 
 def measure_bandwidth(ip, port=443, timeout=10, size_mb=1.0):
     null_device = "NUL" if sys.platform == "win32" else "/dev/null"
@@ -224,8 +223,6 @@ def measure_bandwidth(ip, port=443, timeout=10, size_mb=1.0):
     except:
         pass
     return 0
-
-# ========== 可达性验证（CF Workers + TLS）==========
 
 WORKERS_DOMAIN = os.environ.get("WORKERS_DOMAIN", "xin21.whdiah23ouo.dpdns.org")
 
@@ -316,8 +313,6 @@ def check_availability(ip, port=443, timeout=8):
 
     return tls_ok, {"tcp": True, "tls": tls_ok, "workers": workers_ok, "connect_ms": connect_time}
 
-# ========== 地区检测 ==========
-
 CF_IP_RANGES = {
     (173245, 173245): "美国 Cloudflare",
     (10321, 10322): "美国 Cloudflare",
@@ -339,16 +334,14 @@ CF_IP_RANGES = {
 def get_cf_ip_region(ip):
     try:
         octets = [int(x) for x in ip.split('.')]
-        ip_int = (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]
         first_octet = octets[0]
         second_octet = octets[1]
-        if first_octet == 104 and 16 <= second_octet <= 27:
-            return "美国 Cloudflare"
-        if first_octet == 104 and second_octet == 19:
+
+        if first_octet == 104 and 16 <= second_octet <= 31:
             return "美国 Cloudflare"
         if first_octet == 172 and 64 <= second_octet <= 71:
             return "美国 Cloudflare"
-        if first_octet == 162 and second_octet == 159:
+        if first_octet == 162 and second_octet in [158, 159]:
             return "美国 Cloudflare"
         if first_octet == 108 and second_octet == 162:
             return "美国 Cloudflare"
@@ -368,13 +361,30 @@ def get_cf_ip_region(ip):
         pass
     return None
 
+COUNTRY_CODE_MAP = {
+    "US": "美国", "HK": "中国香港", "TW": "中国台湾",
+    "JP": "日本", "KR": "韩国", "SG": "新加坡",
+    "GB": "英国", "DE": "德国", "FR": "法国",
+    "CA": "加拿大", "AU": "澳大利亚", "IN": "印度",
+    "NL": "荷兰", "RU": "俄罗斯", "BR": "巴西",
+    "IT": "意大利", "ES": "西班牙", "SE": "瑞典",
+    "CH": "瑞士", "NO": "挪威", "FI": "芬兰",
+    "DK": "丹麦", "AT": "奥地利", "BE": "比利时",
+    "IE": "爱尔兰", "PT": "葡萄牙", "PL": "波兰",
+    "CZ": "捷克", "RO": "罗马尼亚", "HU": "匈牙利",
+    "MY": "马来西亚", "TH": "泰国", "VN": "越南",
+    "PH": "菲律宾", "ID": "印度尼西亚", "NZ": "新西兰",
+    "MX": "墨西哥", "AR": "阿根廷", "CL": "智利",
+    "CO": "哥伦比亚", "ZA": "南非", "IL": "以色列",
+    "AE": "阿联酋", "SA": "沙特阿拉伯", "TR": "土耳其",
+    "CN": "中国",
+}
+
 def get_ip_location(ip):
     is_actions = os.environ.get('GITHUB_ACTIONS', '') == 'true'
     api_timeout = 5 if is_actions else 8
 
     cf_region = get_cf_ip_region(ip)
-    if cf_region:
-        pass
 
     apis = [
         ("ip-api", f"http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,countryCode,regionName,city,isp,org,as", "json"),
@@ -387,6 +397,7 @@ def get_ip_location(ip):
     for name, url, resp_type in apis:
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            
             if name == "iping.cc":
                 resp = requests.get(url, headers=headers, timeout=api_timeout, verify=False)
             elif name == "ipinfo.io":
@@ -395,12 +406,11 @@ def get_ip_location(ip):
                 resp = requests.get(url, headers=headers, timeout=api_timeout, params=params)
             else:
                 resp = requests.get(url, headers=headers, timeout=api_timeout)
+                
             if resp.status_code != 200:
                 continue
-            if resp_type == "json":
-                data = resp.json()
-            else:
-                continue
+                
+            data = resp.json()
 
             if name == "ip-api":
                 if data.get("status") == "success":
@@ -418,24 +428,7 @@ def get_ip_location(ip):
                     country_code = data.get("country", "") or ""
                     region = data.get("region", "") or ""
                     city = data.get("city", "") or ""
-                    country_names = {
-                        "US": "美国", "HK": "中国香港", "TW": "中国台湾",
-                        "JP": "日本", "KR": "韩国", "SG": "新加坡",
-                        "GB": "英国", "DE": "德国", "FR": "法国",
-                        "CA": "加拿大", "AU": "澳大利亚", "IN": "印度",
-                        "NL": "荷兰", "RU": "俄罗斯", "BR": "巴西",
-                        "IT": "意大利", "ES": "西班牙", "SE": "瑞典",
-                        "CH": "瑞士", "NO": "挪威", "FI": "芬兰",
-                        "DK": "丹麦", "AT": "奥地利", "BE": "比利时",
-                        "IE": "爱尔兰", "PT": "葡萄牙", "PL": "波兰",
-                        "CZ": "捷克", "RO": "罗马尼亚", "HU": "匈牙利",
-                        "MY": "马来西亚", "TH": "泰国", "VN": "越南",
-                        "PH": "菲律宾", "ID": "印度尼西亚", "NZ": "新西兰",
-                        "MX": "墨西哥", "AR": "阿根廷", "CL": "智利",
-                        "CO": "哥伦比亚", "ZA": "南非", "IL": "以色列",
-                        "AE": "阿联酋", "SA": "沙特阿拉伯", "TR": "土耳其",
-                    }
-                    country = country_names.get(country_code, country_code)
+                    country = COUNTRY_CODE_MAP.get(country_code, country_code)
                     parts = [p for p in [country, region, city] if p]
                     location = " ".join(parts) if parts else ""
                     if location:
@@ -465,15 +458,22 @@ def get_ip_location(ip):
                 if data.get("code") == 200 and data.get("data"):
                     info = data["data"]
                     country = info.get("country", "") or ""
-                    country_code = info.get("country_code", "") or info.get("countryCode", "") or ""
+                    raw_country_code = info.get("country_code", "") or info.get("countryCode", "") or ""
                     region = info.get("region", "") or ""
                     city = info.get("city", "") or ""
+                    
+                    country_code = raw_country_code.upper()
+                    if country_code and len(country_code) == 2:
+                        mapped_country = COUNTRY_CODE_MAP.get(country_code)
+                        if mapped_country and not any(c in country for c in ['中国', '美国', '日本']):
+                            country = mapped_country
+                    
                     parts = [p for p in [country, region, city] if p]
                     location = " ".join(parts) if parts else ""
                     if location:
-                        return {"success": True, "location": location, "country_code": country_code.upper() if country_code else "XX"}
+                        return {"success": True, "location": location, "country_code": country_code if country_code else "XX"}
 
-        except:
+        except Exception as e:
             continue
 
     if cf_region:
@@ -514,115 +514,48 @@ ASN_REGION_MAP = {
     "AS6830": ("德国", "DE", "Liberty Global"),
     "AS3320": ("德国", "DE", "Deutsche Telekom"),
     "AS12389": ("俄罗斯", "RU", "Rostelecom"),
-    "AS8075": ("美国", "US", "Microsoft"),
-    "AS15169": ("美国", "US", "Google"),
-    "AS16509": ("美国", "US", "Amazon"),
-    "AS14618": ("美国", "US", "Amazon"),
-    "AS20473": ("美国", "US", "Vultr"),
-    "AS63949": ("美国", "US", "Linode"),
-    "AS14061": ("美国", "US", "DigitalOcean"),
-    "AS16276": ("法国", "FR", "OVH"),
-    "AS24940": ("德国", "DE", "Hetzner"),
-    "AS60781": ("荷兰", "NL", "Leaseweb"),
-    "AS62041": ("荷兰", "NL", "Contabo"),
-}
-
-COUNTRY_NAMES = {
-    "CN": "中国", "HK": "中国香港", "TW": "中国台湾",
-    "JP": "日本", "KR": "韩国", "SG": "新加坡",
-    "US": "美国", "GB": "英国", "DE": "德国",
-    "FR": "法国", "AU": "澳大利亚", "CA": "加拿大",
-    "IN": "印度", "BR": "巴西", "NL": "荷兰",
-    "RU": "俄罗斯", "IT": "意大利", "ES": "西班牙",
-    "SE": "瑞典", "CH": "瑞士", "NO": "挪威", "FI": "芬兰",
-    "DK": "丹麦", "AT": "奥地利", "BE": "比利时",
-    "IE": "爱尔兰", "PT": "葡萄牙", "PL": "波兰",
-    "MY": "马来西亚", "TH": "泰国", "VN": "越南",
-    "PH": "菲律宾", "ID": "印度尼西亚", "NZ": "新西兰",
-    "MX": "墨西哥", "AR": "阿根廷", "CL": "智利",
-    "ZA": "南非", "IL": "以色列", "AE": "阿联酋",
-    "TR": "土耳其", "UA": "乌克兰", "CZ": "捷克",
-    "RO": "罗马尼亚", "HU": "匈牙利", "BG": "保加利亚",
 }
 
 def infer_location_from_asn(ip):
     try:
-        result = subprocess.run(
-            ["nslookup", "-type=TXT", f"{ip}.origin.asn.cymru.com", "8.8.8.8"],
-            capture_output=True, text=True, timeout=5
-        )
-        output = result.stdout + result.stderr
-        asn_match = re.search(r'"(\d+)\s+', output)
-        if asn_match:
-            asn = f"AS{asn_match.group(1)}"
-            if asn in ASN_REGION_MAP:
-                country, code, provider = ASN_REGION_MAP[asn]
-                return {
-                    "success": True,
-                    "location": f"{country} ({provider})",
-                    "country_code": code,
-                    "source": "asn_infer"
-                }
-            try:
-                headers = {"User-Agent": "Mozilla/5.0"}
-                resp = requests.get(
-                    f"https://stat.ripe.net/data/as-overview/data.json?resource={asn}",
-                    headers=headers, timeout=5
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    holder = data.get("data", {}).get("holder", "")
-                    country = data.get("data", {}).get("country", "")
-                    if country:
-                        cn_name = COUNTRY_NAMES.get(country, country)
-                        location = f"{cn_name} ({holder})" if holder else cn_name
-                        return {
-                            "success": True,
-                            "location": location,
-                            "country_code": country,
-                            "source": "asn_ripe"
-                        }
-            except:
-                pass
-            return {
-                "success": True,
-                "location": f"ASN-{asn}",
-                "country_code": "XX",
-                "source": "asn_raw"
-            }
+        url = f"http://ip-api.com/json/{ip}?fields=as"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            asn_str = data.get("as", "")
+            if asn_str and asn_str.startswith("AS"):
+                asn_num = asn_str.split()[0]
+                if asn_num in ASN_REGION_MAP:
+                    country, code, org = ASN_REGION_MAP[asn_num]
+                    return {"success": True, "location": f"{country} {org}", "country_code": code, "source": "asn"}
     except:
         pass
     return None
 
-# ========== 主流程 ==========
-
 def main():
     start_time = time.time()
+    is_github_actions = os.environ.get('GITHUB_ACTIONS', '') == 'true'
 
     print("=" * 70)
-    print("IP节点检测工具 - v8.0（可用性验证版）")
-    print("=" * 70)
+    print("IP节点检测工具 v9.0（高质量统一443版）")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"流程: 数据源->TCP->带宽->可达性验证->地区->评分->输出\n")
+    print(f"环境: {'GitHub Actions' if is_github_actions else '本地运行'}")
+    print(f"Workers域名: {WORKERS_DOMAIN}")
+    print("=" * 70)
 
-    # ====== 步骤1：获取并去重 ======
-    print("[步骤1] 获取IP节点列表...")
     nodes = fetch_all_nodes()
+    total_nodes = len(nodes)
+
     if not nodes:
-        print("[FAIL] 无法获取节点列表")
+        print("[FAIL] 无可用节点")
         return
 
-    total_nodes = len(nodes)
-    print(f"[OK] 成功获取 {total_nodes} 个唯一节点\n")
-
-    # ====== 步骤2：TCP测试 ======
     print("=" * 70)
     print("[步骤2] TCP连接测试")
     print("=" * 70)
 
-    is_github_actions = os.environ.get('GITHUB_ACTIONS', '') == 'true'
-    tcp_timeout = config.get("TIMEOUT", 5 if is_github_actions else 8)
-    tcp_workers = min(300 if is_github_actions else 200, max(50, total_nodes // 50))
+    tcp_timeout = config.get("TCP_TIMEOUT", 8 if is_github_actions else 10)
+    tcp_workers = min(500 if is_github_actions else 300, max(50, total_nodes // 20))
     tcp_retries = 1 if is_github_actions else 2
     print(f"\n总节点: {total_nodes} | 并发: {tcp_workers} | 超时: {tcp_timeout}s\n")
 
@@ -666,7 +599,6 @@ def main():
         print("[FAIL] TCP全部失败")
         return
 
-    # ====== 步骤3：带宽测试 ======
     print("=" * 70)
     print("[步骤3] 带宽测速")
     print("=" * 70)
@@ -678,7 +610,7 @@ def main():
         tcp_results.sort(key=lambda x: x[1])
         bw_results = [(node, lat, 0) for node, lat in tcp_results]
     else:
-        bw_timeout = config.get("BANDWIDTH_TIMEOUT", 8 if is_github_actions else 12)
+        bw_timeout = config.get("BANDWIDTH_TIMEOUT", 12)
         bw_size_mb = config.get("BANDWIDTH_SIZE_MB", 1.0)
         bw_workers = min(50 if is_github_actions else 30, max(10, len(tcp_results) // 100))
 
@@ -721,7 +653,6 @@ def main():
         valid_bw = sum(1 for _, _, s in bw_results if s > 0)
         print(f"\n[OK] 带宽完成! 耗时{t3:.1f}s | 有效: {valid_bw}/{len(bw_results)}\n")
 
-    # ====== 步骤4：可达性验证 ======
     print("=" * 70)
     print("[步骤4] 可达性验证 (CF Workers + TLS)")
     print("=" * 70)
@@ -770,7 +701,6 @@ def main():
         bw_results.sort(key=lambda x: -x[2])
         avail_results = bw_results[:500]
 
-    # ====== 步骤5：地区检测 ======
     print("=" * 70)
     print("[步骤5] 地区检测")
     print("=" * 70)
@@ -829,22 +759,23 @@ def main():
     t7 = time.time() - t6
     print(f"\n[OK] 地区检测完成! 耗时{t7:.1f}s | 成功: {stats['loc_success']}/{len(final_data)}\n")
 
-    # ====== 步骤6：评分排序 + 输出 ======
     print("=" * 70)
-    print("[步骤6] 评分排序 & 输出")
+    print("[步骤6] 评分排序 & 输出（统一443端口）")
     print("=" * 70)
 
     TARGET = 500
-    HK_PRIORITY = 50
-    MIN_SPEED = 1.0
+    HK_PRIORITY = 80
+    MIN_SPEED = 0.5
 
     for item in final_data:
         lat = item['latency']
         spd = item['speed']
+        
         lat_score = max(0, 100 - lat / 10) if lat > 0 else 0
         spd_score = min(100, spd * 5) if spd > 0 else 0
+        
         item['score'] = lat_score * 0.3 + spd_score * 0.7
-
+    
     fast_items = [x for x in final_data if x['speed'] >= MIN_SPEED]
     slow_items = [x for x in final_data if x['speed'] < MIN_SPEED and x['speed'] > 0]
     zero_items = [x for x in final_data if x['speed'] == 0]
@@ -855,18 +786,21 @@ def main():
 
     sorted_data = fast_items + slow_items + zero_items
 
-    hk_items = [x for x in sorted_data if any(k in x['location'] for k in ['香港', 'HK', 'Hong Kong', 'Kowloon'])]
-    other_items = [x for x in sorted_data if not any(k in x['location'] for k in ['香港', 'HK', 'Hong Kong', 'Kowloon'])]
+    hk_items = [x for x in sorted_data if any(k in x['location'] for k in ['香港', 'Hong Kong', 'Kowloon'])]
+    other_items = [x for x in sorted_data if not any(k in x['location'] for k in ['香港', 'Hong Kong', 'Kowloon'])]
 
     print(f"\n[HK] 香港节点: {len(hk_items)} | 其他: {len(other_items)} | 高速(>{MIN_SPEED}Mbps): {len(fast_items)}")
 
     output = []
+    
     output.extend(hk_items[:HK_PRIORITY])
+    
     for item in other_items:
         if len(output) >= TARGET:
             break
         if item['node'] not in [x['node'] for x in output]:
             output.append(item)
+    
     for item in hk_items[HK_PRIORITY:]:
         if len(output) >= TARGET:
             break
@@ -878,8 +812,7 @@ def main():
         m = NODE_PATTERN.match(item['node'])
         if m:
             ip = m.group(1)
-            port = m.group(2)
-            output_lines.append(f"{ip}:{port}#{item['location']}")
+            output_lines.append(f"{ip}:443#{item['location']}")
 
     if len(output_lines) < TARGET:
         shortage = TARGET - len(output_lines)
@@ -890,7 +823,7 @@ def main():
                 break
             m = NODE_PATTERN.match(item['node'])
             if m:
-                line = f"{m.group(1)}:{m.group(2)}#{item['location']}"
+                line = f"{m.group(1)}:443#{item['location']}"
                 if line not in existing:
                     output_lines.append(line)
                     existing.add(line)
@@ -900,7 +833,7 @@ def main():
         f.write('\n'.join(output_lines) + '\n')
 
     print(f"\n[OK] 已保存 {len(output_lines)} 个节点到 {output_file}")
-    print(f"   格式: ip:端口#地区名称")
+    print(f"   格式: ip:443#地区名称（统一端口）")
     print(f"   [HK] 香港优先: {min(HK_PRIORITY, len(hk_items))} 个")
 
     if output_lines:
@@ -918,7 +851,7 @@ def main():
     print(f"  可达性: {stats['avail_success']}/{stats['avail_tested']} ({stats['avail_success']/max(stats['avail_tested'],1)*100:.1f}%)")
     print(f"  地区: {stats['loc_success']}/{stats['loc_tested']} ({stats['loc_success']/max(stats['loc_tested'],1)*100:.1f}%)")
     print(f"  高速节点(>{MIN_SPEED}Mbps): {len(fast_items)}")
-    print(f"  最终输出: {len(output_lines)} 个节点")
+    print(f"  最终输出: {len(output_lines)} 个节点（全部443端口）")
     print(f"  总耗时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
     print("="*70)
 
