@@ -1,14 +1,9 @@
 name: Update Cloudflare IP
 
 on:
-  # 1. 拆分触发器，避免paths-ignore影响定时任务
-  schedule:
-    # UTC时间每30分钟运行一次（对应北京时间每30分钟）
-    - cron: '*/30 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
-    # 只在非忽略文件变化时触发push运行
     paths-ignore:
       - 'ip.txt'
       - 'README.md'
