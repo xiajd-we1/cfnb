@@ -160,6 +160,136 @@
       "url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.csv",
       "enabled": true,
       "name": "yuanxiawan-cfip-csv"
+    },
+    {
+      "url": "https://bestcf.pages.dev/uouin/all.txt",
+      "enabled": true,
+      "name": "BestCF-UOUIN-三网带测速"
+    },
+    {
+      "url": "https://bestcf.pages.dev/wetest/ipv4.txt",
+      "enabled": true,
+      "name": "BestCF-WeTest-三网"
+    },
+    {
+      "url": "https://bestcf.pages.dev/luoli/all.txt",
+      "enabled": true,
+      "name": "BestCF-LuoLi"
+    },
+    {
+      "url": "https://bestcf.pages.dev/cfyes/ipv4.txt",
+      "enabled": true,
+      "name": "BestCF-CFYes-三网"
+    },
+    {
+      "url": "https://bestcf.pages.dev/xinyitang3/ipv4.txt",
+      "enabled": true,
+      "name": "BestCF-Mia"
+    },
+    {
+      "url": "https://bestcf.pages.dev/vps789/top20.txt",
+      "enabled": true,
+      "name": "BestCF-VPS789-TOP20"
+    },
+    {
+      "url": "https://bestcf.pages.dev/gslege/Cfxyz.txt",
+      "enabled": true,
+      "name": "BestCF-Gslege-带测速"
+    },
+    {
+      "url": "https://bestcf.pages.dev/tiancheng/all.txt",
+      "enabled": true,
+      "name": "BestCF-天诚-全量"
+    },
+    {
+      "url": "https://bestcf.pages.dev/tiancheng/hk.txt",
+      "enabled": true,
+      "name": "BestCF-天诚-香港"
+    },
+    {
+      "url": "https://bestcf.pages.dev/tiancheng/sg.txt",
+      "enabled": true,
+      "name": "BestCF-天诚-新加坡"
+    },
+    {
+      "url": "https://bestcf.pages.dev/tiancheng/jp.txt",
+      "enabled": true,
+      "name": "BestCF-天诚-日本"
+    },
+    {
+      "url": "https://bestcf.pages.dev/tiancheng/kr.txt",
+      "enabled": true,
+      "name": "BestCF-天诚-韩国"
+    },
+    {
+      "url": "https://bestcf.pages.dev/vvhan/ipv4.txt",
+      "enabled": true,
+      "name": "BestCF-vvHan-三网"
+    },
+    {
+      "url": "https://bestcf.pages.dev/zhixuanwang/ipv4-onlyip.txt",
+      "enabled": true,
+      "name": "BestCF-ZhiXuan"
+    },
+    {
+      "url": "https://bestcf.pages.dev/cmliu/all.txt",
+      "enabled": true,
+      "name": "BestCF-CM1"
+    },
+    {
+      "url": "https://bestcf.pages.dev/ircf/ipv4.txt",
+      "enabled": true,
+      "name": "BestCF-IRCF"
+    },
+    {
+      "url": "https://bestcf.pages.dev/nirevil/ipv4.txt",
+      "enabled": true,
+      "name": "BestCF-NiREvil-三网"
+    },
+    {
+      "url": "https://bestcf.pages.dev/s5gy/all.txt",
+      "enabled": true,
+      "name": "BestCF-S5公益"
+    },
+    {
+      "url": "https://cf.junzhen.qzz.io/best_ips.txt",
+      "enabled": true,
+      "name": "MJZ-JZ联通"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/svip-s/cloudflare_ip/refs/heads/main/best_ips.txt",
+      "enabled": true,
+      "name": "SS-移动"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/love-ztm/cfip/refs/heads/main/best_ips.txt",
+      "enabled": true,
+      "name": "LZ-电信"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/love-ztm/cfip/refs/heads/main/ubest_ips.txt",
+      "enabled": true,
+      "name": "LZ-联通"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/BestCF/bestcfv4.txt",
+      "enabled": true,
+      "name": "MingYu-IPv4"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist-Pro.txt",
+      "enabled": true,
+      "name": "Senflare-IP"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/einsitang/my-fast-cf-ip/refs/heads/master/fastips.txt",
+      "enabled": true,
+      "name": "Einsitang-快速CF-IP"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt",
+      "enabled": true,
+      "name": "Hubbylei-最佳CF"
     }
   ],
   "ENABLE_REAL_LOCATION_DETECT": true,
