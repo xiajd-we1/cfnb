@@ -5,7 +5,6 @@ __pycache__/
 .env
 .venv/
 venv/
-ip.txt
 *.log
 test_*.py
 *_FIX_GUIDE.md
@@ -22,9 +21,12 @@ auto_run.bat
 # 运行日志
 run_log.txt
 
-# 源项目副本（保留在本地，不上传）
+# 不需要上传的文件
+worker.js
+dnshe-renew.js
+package.json
+diagnose_actions_curl.py
+测试结果.txt
 cfnb-main(源项目)/
-
-# 文档（可选）
 CONFIG_GUIDE.md
 GITHUB_ACTIONS.md
