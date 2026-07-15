@@ -906,38 +906,30 @@ def run_stage3(final_data):
 
     final_data = qualified_data
 
-    # 排序：高速优先 -> 低延迟优先
+    # 按评分排序（高分在前）
+    final_data.sort(key=lambda x: -x['score'])
+
+    # 取前1000个最优节点
+    MAX_OUTPUT = 1000
+    if len(final_data) > MAX_OUTPUT:
+        print(f"  截取前 {MAX_OUTPUT} 个最优节点（共 {len(final_data)} 个达标）")
+        final_data = final_data[:MAX_OUTPUT]
+
+    # 统计
     fast_items = [x for x in final_data if x['speed'] >= 2.0]
     slow_items = [x for x in final_data if x['speed'] < 2.0]
+    hk_items = [x for x in final_data if any(k in x['location'] for k in ['香港', 'Hong Kong', 'Kowloon'])]
 
-    fast_items.sort(key=lambda x: -x['score'])
-    slow_items.sort(key=lambda x: -x['score'])
-
-    sorted_data = fast_items + slow_items
-
-    # 香港优先
-    hk_items = [x for x in sorted_data if any(k in x['location'] for k in ['香港', 'Hong Kong', 'Kowloon'])]
-    other_items = [x for x in sorted_data if not any(k in x['location'] for k in ['香港', 'Hong Kong', 'Kowloon'])]
-
-    print(f"\n总计: {len(sorted_data)} 个优质节点")
+    print(f"\n总计: {len(final_data)} 个优质节点")
     print(f"  香港节点: {len(hk_items)}")
-    print(f"  其他节点: {len(other_items)}")
     print(f"  高速(>=2Mbps): {len(fast_items)}")
     print(f"  中速(0.5-2Mbps): {len(slow_items)}")
 
-    # 保存：所有通过测试的IP，不限制数量
+    # 保存
     output_lines = []
     seen = set()
 
-    # 香港优先输出
-    for item in hk_items:
-        line = f"{item['ip']}:443#{item['location']}"
-        if line not in seen:
-            output_lines.append(line)
-            seen.add(line)
-
-    # 其他节点
-    for item in other_items:
+    for item in final_data:
         line = f"{item['ip']}:443#{item['location']}"
         if line not in seen:
             output_lines.append(line)
@@ -949,12 +941,6 @@ def run_stage3(final_data):
 
     print(f"\n[OK] 已保存 {len(output_lines)} 个节点到 {output_file}")
     print(f"   格式: ip:443#地区名称（统一端口）")
-    print(f"   香港优先: {len(hk_items)} 个")
-
-    if output_lines:
-        print(f"\n前20个样本:")
-        for i, line in enumerate(output_lines[:20], 1):
-            print(f"  [{i:2d}] {line}")
 
 
 # ==================== 主流程 ====================
