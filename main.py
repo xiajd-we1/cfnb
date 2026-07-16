@@ -41,6 +41,48 @@ NODE_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+):(\d+)')
 IP_ONLY_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+)$')
 CSV_IP_PATTERN = re.compile(r'^(\d+\.\d+\.\d+\.\d+),(\d+)')
 
+# Cloudflare官方IP段（IPv4）- 用于过滤非CF IP
+# 来源: https://www.cloudflare.com/ips-v4/
+CF_IPV4_CIDRS = [
+    '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22',
+    '103.31.4.0/22', '141.101.64.0/18', '108.162.192.0/18',
+    '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22',
+    '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
+    '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+]
+
+import ipaddress as _ipaddr
+
+# 预计算CF IP段为网络对象
+CF_NETWORKS = [_ipaddr.ip_network(cidr) for cidr in CF_IPV4_CIDRS]
+
+def is_cloudflare_ip(ip_str):
+    """检查IP是否属于Cloudflare的IP段"""
+    try:
+        ip = _ipaddr.ip_address(ip_str)
+        for net in CF_NETWORKS:
+            if ip in net:
+                return True
+    except ValueError:
+        pass
+    return False
+
+def filter_cf_ips(node_list):
+    """过滤出Cloudflare IP，返回(cf_nodes, non_cf_count)"""
+    cf_nodes = []
+    non_cf_count = 0
+    for node in node_list:
+        m = NODE_PATTERN.match(node)
+        if m:
+            ip = m.group(1)
+            if is_cloudflare_ip(ip):
+                cf_nodes.append(node)
+            else:
+                non_cf_count += 1
+        else:
+            cf_nodes.append(node)  # 格式不明确的保留
+    return cf_nodes, non_cf_count
+
 stats = {
     'stage1_tested': 0, 'stage1_passed': 0,
     'stage2_bw_tested': 0, 'stage2_bw_passed': 0,
@@ -183,8 +225,16 @@ def fetch_all_nodes():
 
     print("\n" + "=" * 70)
     print(f"[OK] 数据源获取完成: 原始 {total_raw} 个 → 去重后 {len(all_nodes)} 个唯一节点 (去除 {total_raw - len(all_nodes)} 个重复)")
-    print(f"     其中 {len(ip_region_tags)} 个IP已有地区标注（无需API查询）\n")
-    return list(all_nodes), ip_region_tags
+    print(f"     其中 {len(ip_region_tags)} 个IP已有地区标注（无需API查询）")
+
+    # 过滤非Cloudflare IP（edgetunnel只能用CF CDN节点）
+    cf_nodes, non_cf_count = filter_cf_ips(list(all_nodes))
+    print(f"\n[OK] CF IP过滤: {len(all_nodes)} 个 → {len(cf_nodes)} 个Cloudflare IP (去除 {non_cf_count} 个非CF IP)")
+    if not cf_nodes:
+        print("[WARN] 无CF IP，保留所有IP继续测试")
+        cf_nodes = list(all_nodes)
+    
+    return cf_nodes, ip_region_tags
 
 
 # ==================== 阶段1：极速初筛延迟 ====================
