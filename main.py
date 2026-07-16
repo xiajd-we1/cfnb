@@ -83,6 +83,24 @@ def filter_cf_ips(node_list):
             cf_nodes.append(node)  # 格式不明确的保留
     return cf_nodes, non_cf_count
 
+def generate_cf_random_ips(count=2000):
+    """从CF官方IP段中随机生成IP用于测试"""
+    import random
+    cf_ips = set()
+    for net in CF_NETWORKS:
+        num_hosts = net.num_addresses - 2  # 减去网络地址和广播地址
+        if num_hosts <= 0:
+            continue
+        # 每个CIDR段按比例分配
+        alloc = max(1, int(count * num_hosts / sum(n.num_addresses - 2 for n in CF_NETWORKS if n.num_addresses > 2)))
+        for _ in range(alloc):
+            if len(cf_ips) >= count:
+                break
+            offset = random.randint(1, num_hosts - 1)
+            ip = str(net.network_address + offset)
+            cf_ips.add(ip)
+    return list(cf_ips)[:count]
+
 stats = {
     'stage1_tested': 0, 'stage1_passed': 0,
     'stage2_bw_tested': 0, 'stage2_bw_passed': 0,
@@ -230,6 +248,26 @@ def fetch_all_nodes():
     # 过滤非Cloudflare IP（edgetunnel只能用CF CDN节点）
     cf_nodes, non_cf_count = filter_cf_ips(list(all_nodes))
     print(f"\n[OK] CF IP过滤: {len(all_nodes)} 个 → {len(cf_nodes)} 个Cloudflare IP (去除 {non_cf_count} 个非CF IP)")
+
+    # 从CF官方IP段随机生成补充IP（确保有足够的CF IP进行测试）
+    RANDOM_CF_COUNT = 5000
+    if len(cf_nodes) < 1000:
+        random_ips = generate_cf_random_ips(RANDOM_CF_COUNT)
+        before = len(cf_nodes)
+        existing_ips = set()
+        for node in cf_nodes:
+            m = NODE_PATTERN.match(node)
+            if m:
+                existing_ips.add(m.group(1))
+        added = 0
+        for ip in random_ips:
+            if ip not in existing_ips:
+                cf_nodes.append(f"{ip}:443")
+                existing_ips.add(ip)
+                added += 1
+        print(f"[OK] CF随机IP补充: 生成 {len(random_ips)} 个 → 新增 {added} 个 (去重后)")
+        print(f"     总CF IP数: {before} → {len(cf_nodes)}")
+
     if not cf_nodes:
         print("[WARN] 无CF IP，保留所有IP继续测试")
         cf_nodes = list(all_nodes)

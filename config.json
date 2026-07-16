@@ -277,6 +277,31 @@
       "name": "MingYu-IPv4"
     },
     {
+      "url": "https://addressesapi.090227.xyz/CloudFlareYes",
+      "enabled": true,
+      "name": "CM优选API-三网优选(edgetunnel推荐)"
+    },
+    {
+      "url": "https://ipdb.api.030101.xyz/?type=bestcf&country=true",
+      "enabled": true,
+      "name": "CM优选IPDB-带地区"
+    },
+    {
+      "url": "https://cf.090227.xyz/ct?ips=100",
+      "enabled": true,
+      "name": "CM三网-电信100"
+    },
+    {
+      "url": "https://cf.090227.xyz/cu?ips=100",
+      "enabled": true,
+      "name": "CM三网-联通100"
+    },
+    {
+      "url": "https://cf.090227.xyz/cmcc?ips=100",
+      "enabled": true,
+      "name": "CM三网-移动100"
+    },
+    {
       "url": "https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist-Pro.txt",
       "enabled": true,
       "name": "Senflare-IP"
