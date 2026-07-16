@@ -66,8 +66,8 @@
   "DATA_SOURCES": [
     {
       "url": "https://zip.cm.edu.kg/all.txt",
-      "enabled": true,
-      "name": "主数据源"
+      "enabled": false,
+      "name": "主数据源(含大量非CFIP-已禁用)"
     },
     {
       "url": "https://raw.githubusercontent.com/joname1/BestCFip/main/ipv4.txt",
@@ -93,13 +93,13 @@
     },
     {
       "url": "https://raw.githubusercontent.com/xxzh72/yxym/main/proxyip.txt",
-      "enabled": true,
-      "name": "xxzh72-proxyip"
+      "enabled": false,
+      "name": "xxzh72-proxyip(ProxyIP-已禁用)"
     },
     {
       "url": "https://raw.githubusercontent.com/AiLee77/proxyip.cczz.eu.cc/main/ip.txt",
-      "enabled": true,
-      "name": "AiLee77-ip"
+      "enabled": false,
+      "name": "AiLee77-ip(ProxyIP-已禁用)"
     },
     {
       "url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-A",
@@ -128,8 +128,8 @@
     },
     {
       "url": "https://raw.githubusercontent.com/chris202010/yxym/main/proxyip.txt",
-      "enabled": true,
-      "name": "chris202010-proxyip"
+      "enabled": false,
+      "name": "chris202010-proxyip(ProxyIP-已禁用)"
     },
     {
       "url": "https://raw.githubusercontent.com/xgonce/Cloudflare_IP/main/result.csv",
@@ -138,13 +138,13 @@
     },
     {
       "url": "https://raw.githubusercontent.com/Wwuyi123/CF-Proxyip/main/proxyip.txt",
-      "enabled": true,
-      "name": "Wwuyi123-proxyip"
+      "enabled": false,
+      "name": "Wwuyi123-proxyip(ProxyIP-已禁用)"
     },
     {
       "url": "https://raw.githubusercontent.com/Wwuyi123/CF-Proxyip/main/proxyip_with_country.txt",
-      "enabled": true,
-      "name": "Wwuyi123-proxyip-country"
+      "enabled": false,
+      "name": "Wwuyi123-proxyip-country(ProxyIP-已禁用)"
     },
     {
       "url": "https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/best_ips.txt",
