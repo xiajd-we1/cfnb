@@ -773,8 +773,10 @@ def fetch_additional_source(url):
     for attempt in range(1, FETCH_MAX_RETRIES + 1):
         try:
             print(f"正在请求数据源 {url} (尝试 {attempt}/{FETCH_MAX_RETRIES}) ...")
-            headers = {"Accept-Encoding": "gzip, deflate, br, zstd"}
-            resp = requests.get(url, timeout=(FETCH_CONNECT_TIMEOUT, FETCH_TIMEOUT), headers=headers)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            }
+            resp = requests.get(url, timeout=(FETCH_CONNECT_TIMEOUT, FETCH_TIMEOUT), headers=headers, allow_redirects=True)
             resp.raise_for_status()
             nodes = parse_adaptive(resp.text)
             print(f"从 {url} 解析出 {len(nodes)} 个节点。")
