@@ -103,7 +103,9 @@
         {"url": "https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist-Pro.txt", "enabled": true},
         {"url": "https://raw.githubusercontent.com/einsitang/my-fast-cf-ip/refs/heads/master/fastips.txt", "enabled": true},
         {"url": "https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt", "enabled": true},
-        {"url": "https://countrymerge.pages.dev/all.txt", "enabled": false}
+        {"url": "https://countrymerge.pages.dev/all.txt", "enabled": false},
+        {"url": "https://raw.githubusercontent.com/gslege/CloudflareIP/main/JP.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/gslege/CloudflareIP/main/US.txt", "enabled": true}
     ],
 
     "FETCH_MAX_RETRIES": 3,
