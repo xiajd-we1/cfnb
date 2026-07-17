@@ -58,6 +58,7 @@
     "DNS_RECORD_TYPE": "TXT",
 
     "ADDITIONAL_SOURCES": [
+        {"url": "https://zip.cm.edu.kg/all.txt", "enabled": true},
         {"url": "https://raw.githubusercontent.com/joname1/BestCFip/main/ipv4.txt", "enabled": true},
         {"url": "https://api.uouin.com/cloudflare.html", "enabled": true},
         {"url": "https://ip.164746.xyz/", "enabled": true},

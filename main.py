@@ -655,16 +655,30 @@ def _parse_text_nodes(text):
 
             if ipport.startswith('['):
                 continue
-            if not re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', ipport):
+
+            # IP:PORT#标签 格式
+            if re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', ipport):
+                code = extract_country_code(label)
+                if code:
+                    nodes.append(f"{ipport}#{code}")
+                else:
+                    if ipport not in pending_set:
+                        pending_set.add(ipport)
+                        pending.append(ipport)
                 continue
 
-            code = extract_country_code(label)
-            if code:
-                nodes.append(f"{ipport}#{code}")
-            else:
-                if ipport not in pending_set:
-                    pending_set.add(ipport)
-                    pending.append(ipport)
+            # IP#标签 格式（无端口）→ 补默认端口
+            if re.match(r'^\d+\.\d+\.\d+\.\d+$', ipport):
+                ipport_with_port = f"{ipport}:{DEFAULT_PORT}"
+                code = extract_country_code(label)
+                if code:
+                    nodes.append(f"{ipport_with_port}#{code}")
+                else:
+                    if ipport_with_port not in pending_set:
+                        pending_set.add(ipport_with_port)
+                        pending.append(ipport_with_port)
+                continue
+
             continue
 
         # 匹配纯 IP:PORT 格式（无国家代码）
