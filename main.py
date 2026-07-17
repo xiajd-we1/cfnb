@@ -1732,6 +1732,29 @@ def write_ip_txt(final_nodes, output_file,
                 f.write(line + "\n")
 
 def main():
+    # GitHub Actions Step Summary 日志收集
+    summary_lines = []
+    summary_lines.append("# 🚀 Cloudflare IP Update Report\n")
+    summary_lines.append("## 📊 Execution Details\n")
+    summary_lines.append(f"- **Status**: running\n")
+    summary_lines.append(f"- **UTC Time**: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n")
+    summary_lines.append(f"- **Beijing Time**: {time.strftime('%Y-%m-%d %H:%M:%S CST', time.localtime())}\n")
+    summary_lines.append(f"- **Branch**: main\n")
+
+    def write_summary(content):
+        """追加内容到summary"""
+        summary_lines.append(content)
+
+    def flush_summary():
+        """将summary写入GITHUB_STEP_SUMMARY环境变量"""
+        summary_file = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary_file:
+            try:
+                with open(summary_file, 'a', encoding='utf-8') as f:
+                    f.write('\n'.join(summary_lines))
+            except Exception as e:
+                print(f"写入GITHUB_STEP_SUMMARY失败: {e}")
+
     mode_str = f"全局最优{GLOBAL_TOP_N}个" if USE_GLOBAL_MODE else f"每个国家最优{PER_COUNTRY_TOP_N}个"
     print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
     print(f"最低成功率要求：{MIN_SUCCESS_RATE*100:.0f}%")
@@ -1744,7 +1767,18 @@ def main():
     if FILTER_COUNTRIES_ENABLED:
         print(f"前置白名单过滤：启用，仅保留：{', '.join(ALLOWED_COUNTRIES)}")
 
+    # 记录配置到summary
+    write_summary(f"## ⚙️ Configuration\n")
+    write_summary(f"| Parameter | Value |\n|---|---|\n")
+    write_summary(f"| Mode | {mode_str} |\n")
+    write_summary(f"| Availability Check | {'✅ Enabled' if TEST_AVAILABILITY else '❌ Disabled'} |\n")
+    write_summary(f"| HTTP Check | {'✅ Enabled' if HTTP_TEST_ENABLED else '❌ Disabled'} |\n")
+    write_summary(f"| Bandwidth Candidates | {BANDWIDTH_CANDIDATES} |\n")
+    write_summary(f"| TCP Concurrency | {MAX_WORKERS} |\n")
+    write_summary(f"| Bandwidth Concurrency | {BANDWIDTH_WORKERS} |\n")
+
     nodes = []
+    source_results = []  # 记录数据源解析结果
     for source in ADDITIONAL_SOURCES:
         if not source.get("enabled", True):
             continue
@@ -1752,6 +1786,8 @@ def main():
         if not url:
             continue
         v2_nodes = fetch_additional_source(url)
+        count = len(v2_nodes) if v2_nodes else 0
+        source_results.append((url, count))
         if v2_nodes:
             seen = set()
             for n in nodes:
@@ -1763,14 +1799,32 @@ def main():
                     nodes.append(n)
     print(f"合并后总计 {len(nodes)} 个节点。")
 
+    # 记录数据源解析结果到summary
+    write_summary(f"\n## 📥 Data Sources\n")
+    write_summary(f"| Source | Nodes |\n|---|---|\n")
+    for url, count in source_results:
+        status = f"✅ {count}" if count > 0 else "❌ 0"
+        short_url = url.replace('https://raw.githubusercontent.com/', 'gh:').replace('https://', '')
+        write_summary(f"| {short_url} | {status} |\n")
+
     token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_TOKEN_FILE)
     cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_CACHE_FILE)
     calibrate_regions(nodes, token_file, cache_file)
 
     # CF IP范围前置过滤（最关键！在端口过滤之前，剔除所有非Cloudflare CDN IP）
+    nodes_before_cf = len(nodes)
     nodes = filter_cf_ips(nodes)
+    nodes_after_cf = len(nodes)
+    cf_removed = nodes_before_cf - nodes_after_cf
+    write_summary(f"\n## 🔍 CF IP Pre-Filter\n")
+    write_summary(f"| Metric | Value |\n|---|---|\n")
+    write_summary(f"| Before | {nodes_before_cf} |\n")
+    write_summary(f"| After | {nodes_after_cf} |\n")
+    write_summary(f"| Removed (non-CF) | {cf_removed} |\n")
     if not nodes:
         print("CF IP范围前置过滤后无任何节点，退出程序。")
+        write_summary("\n❌ No CF IPs found after pre-filter!\n")
+        flush_summary()
         sys.exit(0)
 
     if PRE_FILTER_PORT_ENABLED:
@@ -1781,6 +1835,8 @@ def main():
         print(f"前置端口过滤（仅保留端口 {ports_display}）：{before} -> {after} 个节点")
         if not nodes:
             print("前置端口过滤后无任何节点，退出程序。")
+            write_summary("\n❌ No nodes after port filter!\n")
+            flush_summary()
             sys.exit(0)
 
     if PRE_FILTER_BLOCKED_ENABLED and PRE_FILTER_BLOCKED_COUNTRIES:
@@ -1791,10 +1847,14 @@ def main():
         print(f"前置黑名单过滤：{before} -> {after} 个节点（已屏蔽：{', '.join(sorted(blocked_set))}）")
         if not nodes:
             print("前置黑名单过滤后无任何节点，退出程序。")
+            write_summary("\n❌ No nodes after blocked country filter!\n")
+            flush_summary()
             sys.exit(0)
 
     if not nodes:
         print("没有获取到任何有效节点，退出。")
+        write_summary("\n❌ No valid nodes found!\n")
+        flush_summary()
         sys.exit(1)
 
     if FILTER_COUNTRIES_ENABLED and ALLOWED_COUNTRIES:
@@ -1810,6 +1870,8 @@ def main():
         print(f"\n国家过滤（测试前）：{before} -> {after} 个节点（允许国家：{', '.join(allowed_set)}）")
         if not nodes:
             print("过滤后无任何节点，退出程序。")
+            write_summary("\n❌ No nodes after country filter!\n")
+            flush_summary()
             sys.exit(0)
 
     total = len(nodes)
@@ -1833,6 +1895,8 @@ def main():
     print("\nTCP 测试完成！")
     if not results:
         print("没有通过成功率筛选的节点，请检查网络或降低 MIN_SUCCESS_RATE。")
+        write_summary("\n❌ No nodes passed TCP test!\n")
+        flush_summary()
         sys.exit(0)
 
     results.sort(key=lambda x: (-x[3], x[1]))
@@ -1858,6 +1922,8 @@ def main():
 
     if not candidates:
         print("没有候选节点，退出。")
+        write_summary("\n❌ No candidate nodes!\n")
+        flush_summary()
         sys.exit(0)
 
     candidates_after_availability, avail_ip_info, avail_exit_details = availability_filter_with_retry(candidates)
@@ -1944,6 +2010,52 @@ def main():
                  http_latency_map=http_latency_map,
                  http_jitter_map=http_jitter_map)
     print(f"\n结果已保存到 {OUTPUT_FILE}（共 {len(final_selected)} 个节点）")
+
+    # 写入最终结果到summary
+    write_summary(f"\n## ✅ Success\n")
+    write_summary(f"| Metric | Value |\n|---|---|\n")
+    write_summary(f"| IP File | Generated successfully |\n")
+    write_summary(f"| IP Count | {len(final_selected)} |\n")
+    write_summary(f"| File Size | {os.path.getsize(OUTPUT_FILE) if os.path.exists(OUTPUT_FILE) else 0} bytes |\n")
+    write_summary(f"\n## 📱 Subscription URL\n")
+    write_summary(f"https://raw.githubusercontent.com/xiajd-we1/cfnb/main/ip.txt\n")
+
+    # 统计国家分布
+    from collections import Counter
+    country_counts = Counter()
+    for node in final_selected:
+        country = node.split('#')[-1] if '#' in node else '??'
+        country_counts[country] += 1
+    write_summary(f"\n## 🌍 Country Distribution\n")
+    write_summary(f"| Country | Count |\n|---|---|\n")
+    for country, count in country_counts.most_common(20):
+        write_summary(f"| {country} | {count} |\n")
+
+    # 统计IP前缀分布
+    prefix_counts = Counter()
+    for node in final_selected:
+        ip = node.split(':')[0]
+        prefix = '.'.join(ip.split('.')[:2])
+        prefix_counts[prefix] += 1
+    write_summary(f"\n## 📊 IP Prefix Distribution (Top 10)\n")
+    write_summary(f"| Prefix | Count |\n|---|---|\n")
+    for prefix, count in prefix_counts.most_common(10):
+        write_summary(f"| {prefix}.x.x | {count} |\n")
+
+    # 记录筛选流水线各阶段数量
+    write_summary(f"\n## 🔄 Filter Pipeline\n")
+    write_summary(f"| Stage | Count |\n|---|---|\n")
+    write_summary(f"| Data Sources Parsed | {nodes_before_cf} |\n")
+    write_summary(f"| After CF IP Filter | {nodes_after_cf} |\n")
+    write_summary(f"| TCP Passed | {len(results)} |\n")
+    write_summary(f"| Availability Passed | {len(candidates_after_availability)} |\n")
+    write_summary(f"| HTTP Passed | {len(candidates_after_http)} |\n")
+    write_summary(f"| Bandwidth Tested | {len(bw_results) if bw_results else 0} |\n")
+    write_summary(f"| Final Selected | {len(final_selected)} |\n")
+
+    # 更新状态为success
+    summary_lines[3] = f"- **Status**: success\n"
+    flush_summary()
 
     ip_list = [node.split(':')[0] for node in final_selected]
 
