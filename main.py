@@ -1824,7 +1824,7 @@ def main():
     print(f"IPv6 客户端 IP 过滤（仅作用于DNS更新环节）：{'启用' if FILTER_IPV6_AVAILABILITY else '禁用'}")
     print(f"DNS黑名单过滤：{'启用' if FILTER_BLOCKED_COUNTRIES_ENABLED else '禁用'}，黑名单国家：{', '.join(BLOCKED_COUNTRIES)}")
     print(f"IP 风险等级过滤：{'启用' if DNS_IP_RISK_FILTER_ENABLED else '禁用'}（最高允许：{DNS_IP_RISK_MAX_LEVEL}）")
-    print(f"带宽测速候选数：{BANDWIDTH_CANDIDATES}，测速文件大小：{BANDWIDTH_SIZE_MB} MB，超时：{BANDWIDTH_TIMEOUT}s")
+    print(f"带宽测速：全量测试（所有通过前序筛选的IP都进行测速），测速文件大小：{BANDWIDTH_SIZE_MB} MB，超时：{BANDWIDTH_TIMEOUT}s，并发：{BANDWIDTH_WORKERS}")
     if FILTER_COUNTRIES_ENABLED:
         print(f"前置白名单过滤：启用，仅保留：{', '.join(ALLOWED_COUNTRIES)}")
 
@@ -1834,12 +1834,15 @@ def main():
     write_summary(f"| Mode | {mode_str} |\n")
     write_summary(f"| Availability Check | {'✅ Enabled' if TEST_AVAILABILITY else '❌ Disabled'} |\n")
     write_summary(f"| HTTP Check | {'✅ Enabled' if HTTP_TEST_ENABLED else '❌ Disabled'} |\n")
-    write_summary(f"| Bandwidth Candidates | {BANDWIDTH_CANDIDATES} |\n")
+    write_summary(f"| Workers TLS | {'✅ Enabled' if WORKERS_TLS_ENABLED else '❌ Disabled'} |\n")
+    write_summary(f"| Bandwidth Mode | Full test (all passed IPs) |\n")
     write_summary(f"| TCP Concurrency | {MAX_WORKERS} |\n")
+    write_summary(f"| HTTP Concurrency | {HTTP_TEST_WORKERS} |\n")
+    write_summary(f"| TLS Concurrency | {WORKERS_TLS_WORKERS} |\n")
     write_summary(f"| Bandwidth Concurrency | {BANDWIDTH_WORKERS} |\n")
 
-    nodes = []
-    source_results = []  # 记录数据源解析结果
+    all_nodes = []
+    source_results = []
     for source in ADDITIONAL_SOURCES:
         if not source.get("enabled", True):
             continue
@@ -1850,15 +1853,16 @@ def main():
         count = len(v2_nodes) if v2_nodes else 0
         source_results.append((url, count))
         if v2_nodes:
-            seen = set()
-            for n in nodes:
-                seen.add(n.split('#')[0])
-            for n in v2_nodes:
-                key = n.split('#')[0]
-                if key not in seen:
-                    seen.add(key)
-                    nodes.append(n)
-    print(f"合并后总计 {len(nodes)} 个节点。")
+            all_nodes.extend(v2_nodes)
+    
+    seen = set()
+    nodes = []
+    for n in all_nodes:
+        key = n.split('#')[0]
+        if key not in seen:
+            seen.add(key)
+            nodes.append(n)
+    print(f"所有数据源解析完成，共 {len(all_nodes)} 个节点，去重后总计 {len(nodes)} 个节点。")
 
     # 记录数据源解析结果到summary
     write_summary(f"\n## 📥 Data Sources\n")
@@ -1963,23 +1967,8 @@ def main():
     results.sort(key=lambda x: (-x[3], x[1]))
     latency_map = {node: lat for node, lat, _, _ in results}
 
-    if USE_GLOBAL_MODE:
-        candidates = [node for node, _, _, _ in results[:BANDWIDTH_CANDIDATES]]
-        print(f"\nTCP 最优前 {len(candidates)} 个节点进入候选池。")
-    else:
-        country_nodes = defaultdict(list)
-        for node_str, lat, country, succ in results:
-            country_nodes[country].append((node_str, lat, succ))
-
-        total_countries = len(country_nodes)
-        base_limit = max(1, BANDWIDTH_CANDIDATES // total_countries)
-        candidates = []
-        for country, nodes in country_nodes.items():
-            nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
-            limit = min(len(nodes_sorted), base_limit)
-            for node_str, lat, succ in nodes_sorted[:limit]:
-                candidates.append(node_str)
-        print(f"\n各国家候选池分配：共 {total_countries} 个国家，每国最多 {base_limit} 个候选，总计 {len(candidates)} 个节点进入候选池。")
+    candidates = [node for node, _, _, _ in results]
+    print(f"\nTCP 通过 {len(candidates)} 个节点，全部进入后续测试。")
 
     if not candidates:
         print("没有候选节点，退出。")
@@ -2008,20 +1997,13 @@ def main():
             time.sleep(BANDWIDTH_RETRY_DELAY)
 
     if not bw_results:
-        print("\n带宽测速多次重试仍无有效结果，将使用 TCP 筛选结果作为最终节点。")
+        print("\n带宽测速多次重试仍无有效结果，将使用 TCP+HTTP+TLS 筛选结果作为最终节点。")
         send_wxpusher_notification(
-            content=f"带宽测速经 {BANDWIDTH_RETRY_MAX} 轮尝试后仍无有效结果，已降级使用 TCP 排序节点。",
+            content=f"带宽测速经 {BANDWIDTH_RETRY_MAX} 轮尝试后仍无有效结果，已降级使用 TCP+HTTP+TLS 筛选节点。",
             summary="带宽测速全部失败"
         )
         speed_map = {}
-        if USE_GLOBAL_MODE:
-            final_selected = [node for node, _, _, _ in results[:GLOBAL_TOP_N]]
-        else:
-            final_selected = []
-            for country, nodes in country_nodes.items():
-                nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
-                for node_str, _, _ in nodes_sorted[:PER_COUNTRY_TOP_N]:
-                    final_selected.append(node_str)
+        final_selected = candidates_after_tls
     else:
         speed_map = {node: speed for node, speed in bw_results}
         scored_nodes = []
@@ -2036,26 +2018,11 @@ def main():
             scored_nodes.append((node, score, speed, tcp_lat, http_lat))
 
         scored_nodes.sort(key=lambda x: x[1], reverse=True)
+        final_selected = [item[0] for item in scored_nodes]
 
-        if USE_GLOBAL_MODE:
-            final_selected = [item[0] for item in scored_nodes[:GLOBAL_TOP_N]]
-        else:
-            country_scored = defaultdict(list)
-            for item in scored_nodes:
-                node, score, speed, tcp_lat, http_lat = item
-                country = node.split('#')[-1] if '#' in node else ''
-                if country:
-                    country_scored[country].append(item)
-            final_selected = []
-            for country, items in country_scored.items():
-                items.sort(key=lambda x: x[1], reverse=True)
-                for item in items[:PER_COUNTRY_TOP_N]:
-                    final_selected.append(item[0])
-            score_dict = {item[0]: item[1] for item in scored_nodes}
-            final_selected.sort(key=lambda n: score_dict.get(n, 0), reverse=True)
-
-        print("\n================ 最终优选节点 ================")
-        for i, node in enumerate(final_selected, 1):
+        print(f"\n================ 最终优选节点（共 {len(final_selected)} 个） ================")
+        display_count = min(50, len(final_selected))
+        for i, node in enumerate(final_selected[:display_count], 1):
             speed = speed_map.get(node, 0)
             tcp_lat = latency_map.get(node, float('inf'))
             http_lat = http_latency_map.get(node, None)
@@ -2068,6 +2035,8 @@ def main():
             if tcp_lat != float('inf'):
                 line += f" 延迟 {tcp_lat*1000:.2f} ms"
             print(line)
+        if len(final_selected) > display_count:
+            print(f"... 还有 {len(final_selected) - display_count} 个节点，完整列表请查看 {OUTPUT_FILE}")
 
     write_ip_txt(final_selected, OUTPUT_FILE,
                  AD_HEADER_ENABLED, AD_HEADER_LINES,
