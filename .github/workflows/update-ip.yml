@@ -36,27 +36,80 @@ jobs:
       
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y curl dnsutils
           python -m pip install --upgrade pip
           pip install requests aiohttp
       
-      - name: Configure DNS and Network
+      - name: Configure DNS and Hosts
         run: |
-          # 配置备用DNS服务器，提高域名解析成功率
-          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-          echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf
-          echo "nameserver 2001:4860:4860::8888" | sudo tee -a /etc/resolv.conf
-          echo "DNS配置完成："
-          cat /etc/resolv.conf
-          # 测试关键域名解析
-          echo "测试zip.cm.edu.kg DNS解析："
-          nslookup zip.cm.edu.kg 2>/dev/null || dig zip.cm.edu.kg +short 2>/dev/null || echo "DNS解析测试跳过"
-          echo "测试bestcf.pages.dev DNS解析："
-          nslookup bestcf.pages.dev 2>/dev/null || dig bestcf.pages.dev +short 2>/dev/null || echo "DNS解析测试跳过"
-
-      - name: Install curl
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl dnsutils
+          # 使用Google DNS解析关键域名，添加hosts映射绕过Actions DNS限制
+          # zip.cm.edu.kg
+          ZIP_IP=$(dig +short zip.cm.edu.kg @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$ZIP_IP" ]; then
+            echo "$ZIP_IP zip.cm.edu.kg" | sudo tee -a /etc/hosts
+            echo "zip.cm.edu.kg -> $ZIP_IP"
+          else
+            echo "104.21.54.233 zip.cm.edu.kg" | sudo tee -a /etc/hosts
+            echo "zip.cm.edu.kg -> 104.21.54.233 (fallback)"
+          fi
+          # bestcf.pages.dev
+          BESTCF_IP=$(dig +short bestcf.pages.dev @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$BESTCF_IP" ]; then
+            echo "$BESTCF_IP bestcf.pages.dev" | sudo tee -a /etc/hosts
+            echo "bestcf.pages.dev -> $BESTCF_IP"
+          else
+            echo "104.21.54.233 bestcf.pages.dev" | sudo tee -a /etc/hosts
+            echo "bestcf.pages.dev -> 104.21.54.233 (fallback)"
+          fi
+          # countrymerge.pages.dev
+          CM_IP=$(dig +short countrymerge.pages.dev @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$CM_IP" ]; then
+            echo "$CM_IP countrymerge.pages.dev" | sudo tee -a /etc/hosts
+            echo "countrymerge.pages.dev -> $CM_IP"
+          else
+            echo "104.21.54.233 countrymerge.pages.dev" | sudo tee -a /etc/hosts
+            echo "countrymerge.pages.dev -> 104.21.54.233 (fallback)"
+          fi
+          # 090227.xyz系列
+          ADDR_IP=$(dig +short addressesapi.090227.xyz @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$ADDR_IP" ]; then
+            echo "$ADDR_IP addressesapi.090227.xyz" | sudo tee -a /etc/hosts
+            echo "addressesapi.090227.xyz -> $ADDR_IP"
+          fi
+          IPDB_IP=$(dig +short ipdb.api.030101.xyz @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$IPDB_IP" ]; then
+            echo "$IPDB_IP ipdb.api.030101.xyz" | sudo tee -a /etc/hosts
+            echo "ipdb.api.030101.xyz -> $IPDB_IP"
+          fi
+          CF_IP=$(dig +short cf.090227.xyz @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$CF_IP" ]; then
+            echo "$CF_IP cf.090227.xyz" | sudo tee -a /etc/hosts
+            echo "cf.090227.xyz -> $CF_IP"
+          fi
+          # api.uouin.com
+          UOUIN_IP=$(dig +short api.uouin.com @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$UOUIN_IP" ]; then
+            echo "$UOUIN_IP api.uouin.com" | sudo tee -a /etc/hosts
+            echo "api.uouin.com -> $UOUIN_IP"
+          fi
+          # ip.164746.xyz
+          IP164_IP=$(dig +short ip.164746.xyz @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$IP164_IP" ]; then
+            echo "$IP164_IP ip.164746.xyz" | sudo tee -a /etc/hosts
+            echo "ip.164746.xyz -> $IP164_IP"
+          fi
+          # cf.junzhen.qzz.io
+          QZZ_IP=$(dig +short cf.junzhen.qzz.io @8.8.8.8 | grep -E '^[0-9]' | head -1)
+          if [ -n "$QZZ_IP" ]; then
+            echo "$QZZ_IP cf.junzhen.qzz.io" | sudo tee -a /etc/hosts
+            echo "cf.junzhen.qzz.io -> $QZZ_IP"
+          fi
+          echo "=== hosts配置完成 ==="
+          cat /etc/hosts
+          # 测试连通性
+          echo "测试zip.cm.edu.kg连通性："
+          curl -sI --max-time 5 https://zip.cm.edu.kg/all.txt 2>&1 | head -3 || echo "连通性测试跳过"
 
       - name: Run IP update script
         id: run_script
