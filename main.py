@@ -241,6 +241,10 @@ def load_config():
         "HTTP_LATENCY_WEIGHT": 3.0,
         "JITTER_WEIGHT": 3.0,
         "HTTP_JITTER_SAMPLES": 3,
+        "WORKERS_TLS_ENABLED": False,
+        "WORKERS_DOMAIN": "",
+        "WORKERS_TLS_TIMEOUT": 5,
+        "WORKERS_TLS_WORKERS": 64,
         "FILTER_IPV6_AVAILABILITY": True,
         "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
         "BLOCKED_COUNTRIES": [
@@ -366,6 +370,10 @@ HTTP_TEST_METHOD = cfg["HTTP_TEST_METHOD"]
 HTTP_LATENCY_WEIGHT = cfg["HTTP_LATENCY_WEIGHT"]
 JITTER_WEIGHT = cfg["JITTER_WEIGHT"]
 HTTP_JITTER_SAMPLES = cfg["HTTP_JITTER_SAMPLES"]
+WORKERS_TLS_ENABLED = cfg.get("WORKERS_TLS_ENABLED", False)
+WORKERS_DOMAIN = cfg.get("WORKERS_DOMAIN", "")
+WORKERS_TLS_TIMEOUT = cfg.get("WORKERS_TLS_TIMEOUT", 5)
+WORKERS_TLS_WORKERS = cfg.get("WORKERS_TLS_WORKERS", 64)
 FILTER_IPV6_AVAILABILITY = cfg["FILTER_IPV6_AVAILABILITY"]
 FILTER_BLOCKED_COUNTRIES_ENABLED = cfg["FILTER_BLOCKED_COUNTRIES_ENABLED"]
 BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
@@ -1197,6 +1205,53 @@ def check_http_server(node_str, timeout, max_retries, retry_delay, method, conne
     jitter = variance ** 0.5
     return (node_str, True, "cloudflare", avg_lat, jitter)
 
+
+def check_workers_tls(node_str, workers_domain, timeout=5):
+    """验证IP是否可通过TLS连接到edgetunnel Workers域名（模拟edgetunnel实际连接）"""
+    import ssl
+    m = IP_PORT_PATTERN.match(node_str)
+    if not m:
+        return (node_str, False, "parse_error")
+    ip, port = m.group(1), m.group(2)
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        sock = socket.create_connection((ip, int(port)), timeout=timeout)
+        ssock = ctx.wrap_socket(sock, server_hostname=workers_domain)
+        ssock.close()
+        return (node_str, True, "tls_ok")
+    except Exception as e:
+        return (node_str, False, str(e)[:50])
+
+
+def workers_tls_filter(candidates, workers_domain, max_workers=64, timeout=5):
+    """对候选节点进行Workers TLS验证，过滤掉无法通过TLS连接的节点"""
+    if not workers_domain or not candidates:
+        return candidates
+
+    print(f"\n对 {len(candidates)} 个候选节点进行 Workers TLS 验证（域名：{workers_domain}）...")
+    passed = []
+    completed = 0
+    total = len(candidates)
+    last_print = time.time()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(check_workers_tls, node, workers_domain, timeout): node for node in candidates}
+        for future in as_completed(futures):
+            completed += 1
+            node_str, ok, reason = future.result()
+            if ok:
+                passed.append(node_str)
+            now = time.time()
+            if now - last_print >= PROGRESS_PRINT_INTERVAL or completed == total:
+                print(f"\r[Workers TLS验证] 进度：{completed}/{total} ({(completed/total)*100:.1f}%) 通过数量：{len(passed)}", end="", flush=True)
+                last_print = now
+    print()
+    print(f"Workers TLS验证通过 {len(passed)} 个节点")
+    return passed
+
+
 def availability_filter_candidates(candidates):
     if not TEST_AVAILABILITY or not candidates:
         return candidates, {}, {}
@@ -1762,6 +1817,10 @@ def main():
     print(f"最低成功率要求：{MIN_SUCCESS_RATE*100:.0f}%")
     print(f"IP 可用性二次筛选：{'启用' if TEST_AVAILABILITY else '禁用'}（仅对候选节点）")
     print(f"HTTP检测：{'启用' if HTTP_TEST_ENABLED else '禁用'}（仅对候选节点）")
+    if WORKERS_TLS_ENABLED and WORKERS_DOMAIN:
+        print(f"Workers TLS验证：启用（域名：{WORKERS_DOMAIN}，仅对候选节点）")
+    else:
+        print(f"Workers TLS验证：禁用")
     print(f"IPv6 客户端 IP 过滤（仅作用于DNS更新环节）：{'启用' if FILTER_IPV6_AVAILABILITY else '禁用'}")
     print(f"DNS黑名单过滤：{'启用' if FILTER_BLOCKED_COUNTRIES_ENABLED else '禁用'}，黑名单国家：{', '.join(BLOCKED_COUNTRIES)}")
     print(f"IP 风险等级过滤：{'启用' if DNS_IP_RISK_FILTER_ENABLED else '禁用'}（最高允许：{DNS_IP_RISK_MAX_LEVEL}）")
@@ -1931,10 +1990,17 @@ def main():
     candidates_after_availability, avail_ip_info, avail_exit_details = availability_filter_with_retry(candidates)
     candidates_after_http, http_latency_map, http_jitter_map = http_server_filter(candidates_after_availability, cfg)
 
+    # Workers TLS验证：模拟edgetunnel实际TLS连接，过滤无法通过TLS的IP
+    candidates_after_tls = candidates_after_http
+    if WORKERS_TLS_ENABLED and WORKERS_DOMAIN:
+        candidates_after_tls = workers_tls_filter(candidates_after_http, WORKERS_DOMAIN, WORKERS_TLS_WORKERS, WORKERS_TLS_TIMEOUT)
+        write_summary(f"| Workers TLS | {len(candidates_after_tls)}/{len(candidates_after_http)} passed |\n")
+        print(f"Workers TLS验证：{len(candidates_after_http)} -> {len(candidates_after_tls)} 个节点")
+
     bw_results = []
     for attempt in range(1, BANDWIDTH_RETRY_MAX + 1):
         print(f"\n[带宽测速] 第 {attempt} 轮测试...")
-        bw_results = bandwidth_filter(candidates_after_http)
+        bw_results = bandwidth_filter(candidates_after_tls)
         if bw_results:
             break
         if attempt < BANDWIDTH_RETRY_MAX:

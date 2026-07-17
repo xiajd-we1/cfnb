@@ -154,6 +154,18 @@
     "JITTER_WEIGHT": 3.0,
     "HTTP_JITTER_SAMPLES": 3,
 
+    "WORKERS_TLS_ENABLED": true,
+    "_comment_WORKERS_TLS_ENABLED": "关键！启用Workers TLS验证，模拟edgetunnel实际TLS连接，验证IP是否真正可用作edgetunnel优选IP",
+
+    "WORKERS_DOMAIN": "xin21.whdiah23ouo.dpdns.org",
+    "_comment_WORKERS_DOMAIN": "你的edgetunnel Workers域名，用于TLS SNI验证",
+
+    "WORKERS_TLS_TIMEOUT": 5,
+    "_comment_WORKERS_TLS_TIMEOUT": "Workers TLS验证连接超时（秒）",
+
+    "WORKERS_TLS_WORKERS": 64,
+    "_comment_WORKERS_TLS_WORKERS": "Workers TLS验证并发线程数",
+
     "FILTER_IPV6_AVAILABILITY": true,
     "FILTER_BLOCKED_COUNTRIES_ENABLED": true,
     "BLOCKED_COUNTRIES": [
