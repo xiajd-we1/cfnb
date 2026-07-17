@@ -261,10 +261,10 @@ def load_config():
         "SPEED_WEIGHT": 3.0,
         "IP_CALIBRATION_CONCURRENCY": 300,
         "MAX_WORKERS": 300,
-        "AVAILABILITY_WORKERS": 32,
-        "FALLBACK_WORKERS": 32,
-        "BANDWIDTH_WORKERS": 3,
-        "HTTP_TEST_WORKERS": 32,
+        "AVAILABILITY_WORKERS": 64,
+        "FALLBACK_WORKERS": 64,
+        "BANDWIDTH_WORKERS": 20,
+        "HTTP_TEST_WORKERS": 64,
         "DNS_UPDATE_MAX_RETRIES": 3,
         "DNS_UPDATE_RETRY_DELAY": 3,
         "GITHUB_SYNC_MAX_RETRIES": 3,
@@ -572,6 +572,59 @@ def _query_country(ip, port):
     except Exception:
         pass
     return None
+
+
+# ==================== Cloudflare IP 范围定义 ====================
+# CF官方IPv4 CIDR段，用于前置过滤非CF IP（ProxyIP、VPS IP等）
+CF_IP_RANGES = [
+    (ipaddress.IPv4Network('104.16.0.0/12')),   # 104.16.0.0 - 104.31.255.255
+    (ipaddress.IPv4Network('172.64.0.0/13')),    # 172.64.0.0 - 172.71.255.255
+    (ipaddress.IPv4Network('162.158.0.0/15')),   # 162.158.0.0 - 162.159.255.255
+    (ipaddress.IPv4Network('108.162.192.0/18')), # 108.162.192.0 - 108.163.255.255
+    (ipaddress.IPv4Network('190.80.0.0/12')),    # 190.80.0.0 - 190.93.255.255
+    (ipaddress.IPv4Network('188.114.96.0/20')),  # 188.114.96.0 - 188.115.255.255
+    (ipaddress.IPv4Network('197.234.240.0/24')), # 197.234.240.0 - 197.234.240.255
+    (ipaddress.IPv4Network('198.41.128.0/17')),  # 198.41.128.0 - 198.41.255.255
+    (ipaddress.IPv4Network('209.242.0.0/16')),   # 209.242.0.0 - 209.242.255.255
+    (ipaddress.IPv4Network('173.245.48.0/20')),  # 173.245.48.0 - 173.245.63.255
+    (ipaddress.IPv4Network('103.21.244.0/22')),  # 103.21.244.0 - 103.22.31.255
+    (ipaddress.IPv4Network('131.0.72.0/22')),    # 131.0.72.0 - 131.0.72.255
+    (ipaddress.IPv4Network('141.101.64.0/18')),  # 141.101.64.0 - 141.101.127.255
+]
+
+def is_cf_ip(ip_str):
+    """判断IP是否属于Cloudflare CDN IP段"""
+    try:
+        ip = ipaddress.IPv4Address(ip_str)
+        for network in CF_IP_RANGES:
+            if ip in network:
+                return True
+        return False
+    except (ipaddress.AddressValueError, ValueError):
+        return False
+
+def filter_cf_ips(nodes):
+    """前置过滤：仅保留Cloudflare CDN IP，剔除ProxyIP/VPS IP等非CF IP"""
+    before = len(nodes)
+    filtered = []
+    non_cf_examples = set()
+    for node in nodes:
+        ip_port = node.split('#')[0]
+        ip = ip_port.split(':')[0]
+        if is_cf_ip(ip):
+            filtered.append(node)
+        else:
+            if len(non_cf_examples) < 10:
+                non_cf_examples.add(ip)
+    after = len(filtered)
+    removed = before - after
+    if removed > 0:
+        print(f"CF IP范围前置过滤：{before} -> {after} 个节点（剔除 {removed} 个非CF IP）")
+        if non_cf_examples:
+            print(f"  非CF IP示例：{', '.join(sorted(non_cf_examples))}")
+    else:
+        print(f"CF IP范围前置过滤：所有 {before} 个节点均为CF CDN IP，无需过滤")
+    return filtered
 
 
 def _resolve_countries_batch(ipports):
@@ -1742,6 +1795,12 @@ def main():
     token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_TOKEN_FILE)
     cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_CACHE_FILE)
     calibrate_regions(nodes, token_file, cache_file)
+
+    # CF IP范围前置过滤（最关键！在端口过滤之前，剔除所有非Cloudflare CDN IP）
+    nodes = filter_cf_ips(nodes)
+    if not nodes:
+        print("CF IP范围前置过滤后无任何节点，退出程序。")
+        sys.exit(0)
 
     if PRE_FILTER_PORT_ENABLED:
         before = len(nodes)
