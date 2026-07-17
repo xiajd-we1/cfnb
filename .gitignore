@@ -28,5 +28,12 @@ package.json
 diagnose_actions_curl.py
 测试结果.txt
 cfnb-main(源项目)/
+source_compare/
 CONFIG_GUIDE.md
 GITHUB_ACTIONS.md
+
+# VLESS订阅文件（含UUID等敏感信息，禁止公开）
+sub.txt
+sub_plain.txt
+test_xray_config.json
+edgetunnel_worker.js

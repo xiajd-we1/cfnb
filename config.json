@@ -1,326 +1,202 @@
 {
-  "USE_GLOBAL_MODE": true,
-  "GLOBAL_TOP_N": 300,
-  "PER_COUNTRY_TOP_N": 10,
-  "BANDWIDTH_CANDIDATES": 1000,
-  "TCP_PROBES": 3,
-  "MIN_SUCCESS_RATE": 0.9,
-  "TIMEOUT": 10,
-  "SOCKET_DEFAULT_TIMEOUT": 12,
-  "PROGRESS_PRINT_INTERVAL": 1,
-  "FILTER_COUNTRIES_ENABLED": false,
-  "ALLOWED_COUNTRIES": [
-    "US"
-  ],
-  "ENABLE_WXPUSHER": false,
-  "WXPUSHER_APP_TOKEN": "your_app_token_here",
-  "WXPUSHER_UIDS": [
-    "your_uid_here"
-  ],
-  "WXPUSHER_API_URL": "http://wxpusher.zjiecode.com/api/send/message",
-  "NOTIFY_TIMEOUT": 3,
-  "NOTIFY_CONNECT_TIMEOUT": 3,
-  "CF_ENABLED": false,
-  "CF_API_TOKEN": "your_CF_API_TOKEN",
-  "CF_ZONE_ID": "your_CF_ZONE_ID",
-  "CF_DNS_RECORD_NAME": "your_CF_DNS_RECORD_NAME",
-  "CF_TTL": 60,
-  "CF_PROXIED": false,
-  "CF_DNS_CONNECT_TIMEOUT": 3,
-  "CF_DNS_READ_TIMEOUT": 3,
-  "JSON_URL": "https://zip.cm.edu.kg/all.txt",
-  "FETCH_MAX_RETRIES": 3,
-  "FETCH_RETRY_DELAY": 3,
-  "FETCH_TIMEOUT": 10,
-  "FETCH_CONNECT_TIMEOUT": 5,
-  "OUTPUT_FILE": "ip.txt",
-  "TEST_AVAILABILITY": false,
-  "AVAILABILITY_CHECK_API": "https://api.check.proxyip.cmliussss.net/check",
-  "AVAILABILITY_TIMEOUT": 3,
-  "AVAILABILITY_CONNECT_TIMEOUT": 3,
-  "AVAILABILITY_RETRY_MAX": 2,
-  "AVAILABILITY_RETRY_DELAY": 3,
-  "FILTER_IPV6_AVAILABILITY": false,
-  "FILTER_BLOCKED_COUNTRIES_ENABLED": false,
-  "BLOCKED_COUNTRIES": [],
-  "DNS_UPDATE_TARGET_COUNT": 15,
-  "BANDWIDTH_SIZE_MB": 1.0,
-  "BANDWIDTH_TIMEOUT": 12,
-  "BANDWIDTH_RETRY_MAX": 2,
-  "BANDWIDTH_RETRY_DELAY": 3,
-  "BANDWIDTH_URL_TEMPLATE": "https://speed.cloudflare.com/__down?bytes={bytes}",
-  "BANDWIDTH_PROCESS_BUFFER": 2,
-  "BANDWIDTH_CONNECT_TIMEOUT": 5,
-  "MAX_WORKERS": 300,
-  "AVAILABILITY_WORKERS": 20,
-  "BANDWIDTH_WORKERS": 100,
-  "BANDWIDTH_WORKERS_MIN": 50,
-  "BANDWIDTH_WORKERS_MAX": 150,
-  "BANDWIDTH_AUTO_ADJUST": true,
-  "DNS_UPDATE_MAX_RETRIES": 3,
-  "DNS_UPDATE_RETRY_DELAY": 3,
-  "GITHUB_SYNC_MAX_RETRIES": 3,
-  "GITHUB_SYNC_RETRY_DELAY": 3,
-  "GIT_SYNC_PROCESS_TIMEOUT": 180,
-  "MIN_BANDWIDTH_MBPS": 2.0,
-  "DATA_SOURCES": [
-    {
-      "url": "https://zip.cm.edu.kg/all.txt",
-      "enabled": false,
-      "name": "主数据源(含大量非CFIP-已禁用)"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/joname1/BestCFip/main/ipv4.txt",
-      "enabled": true,
-      "name": "joname1-BestCFip"
-    },
-    {
-      "url": "https://api.uouin.com/cloudflare.html",
-      "enabled": true,
-      "name": "uouin-CF优选IP",
-      "type": "html"
-    },
-    {
-      "url": "https://ip.164746.xyz/",
-      "enabled": true,
-      "name": "164746-CF优选IP",
-      "type": "html"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/xxzh72/yxym/main/ip.txt",
-      "enabled": true,
-      "name": "xxzh72-ip"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/xxzh72/yxym/main/proxyip.txt",
-      "enabled": false,
-      "name": "xxzh72-proxyip(ProxyIP-已禁用)"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/AiLee77/proxyip.cczz.eu.cc/main/ip.txt",
-      "enabled": false,
-      "name": "AiLee77-ip(ProxyIP-已禁用)"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-A",
-      "enabled": true,
-      "name": "KafeMars-CF-A"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-B",
-      "enabled": true,
-      "name": "KafeMars-CF-B"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/cf-bestips.txt",
-      "enabled": true,
-      "name": "KafeMars-cf-bestips"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/HK_IP4",
-      "enabled": true,
-      "name": "KafeMars-HK_IP4"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/chris202010/yxym/main/ip.txt",
-      "enabled": true,
-      "name": "chris202010-ip"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/chris202010/yxym/main/proxyip.txt",
-      "enabled": false,
-      "name": "chris202010-proxyip(ProxyIP-已禁用)"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/xgonce/Cloudflare_IP/main/result.csv",
-      "enabled": true,
-      "name": "xgonce-result-csv"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/Wwuyi123/CF-Proxyip/main/proxyip.txt",
-      "enabled": false,
-      "name": "Wwuyi123-proxyip(ProxyIP-已禁用)"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/Wwuyi123/CF-Proxyip/main/proxyip_with_country.txt",
-      "enabled": false,
-      "name": "Wwuyi123-proxyip-country(ProxyIP-已禁用)"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/best_ips.txt",
-      "enabled": true,
-      "name": "HandsomeMJZ-best-ips"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cf.txt",
-      "enabled": true,
-      "name": "yuanxiawan-cf"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.csv",
-      "enabled": true,
-      "name": "yuanxiawan-cfip-csv"
-    },
-    {
-      "url": "https://bestcf.pages.dev/uouin/all.txt",
-      "enabled": true,
-      "name": "BestCF-UOUIN-三网带测速"
-    },
-    {
-      "url": "https://bestcf.pages.dev/wetest/ipv4.txt",
-      "enabled": true,
-      "name": "BestCF-WeTest-三网"
-    },
-    {
-      "url": "https://bestcf.pages.dev/luoli/all.txt",
-      "enabled": true,
-      "name": "BestCF-LuoLi"
-    },
-    {
-      "url": "https://bestcf.pages.dev/cfyes/ipv4.txt",
-      "enabled": true,
-      "name": "BestCF-CFYes-三网"
-    },
-    {
-      "url": "https://bestcf.pages.dev/xinyitang3/ipv4.txt",
-      "enabled": true,
-      "name": "BestCF-Mia"
-    },
-    {
-      "url": "https://bestcf.pages.dev/vps789/top20.txt",
-      "enabled": true,
-      "name": "BestCF-VPS789-TOP20"
-    },
-    {
-      "url": "https://bestcf.pages.dev/gslege/Cfxyz.txt",
-      "enabled": true,
-      "name": "BestCF-Gslege-带测速"
-    },
-    {
-      "url": "https://bestcf.pages.dev/tiancheng/all.txt",
-      "enabled": true,
-      "name": "BestCF-天诚-全量"
-    },
-    {
-      "url": "https://bestcf.pages.dev/tiancheng/hk.txt",
-      "enabled": true,
-      "name": "BestCF-天诚-香港"
-    },
-    {
-      "url": "https://bestcf.pages.dev/tiancheng/sg.txt",
-      "enabled": true,
-      "name": "BestCF-天诚-新加坡"
-    },
-    {
-      "url": "https://bestcf.pages.dev/tiancheng/jp.txt",
-      "enabled": true,
-      "name": "BestCF-天诚-日本"
-    },
-    {
-      "url": "https://bestcf.pages.dev/tiancheng/kr.txt",
-      "enabled": true,
-      "name": "BestCF-天诚-韩国"
-    },
-    {
-      "url": "https://bestcf.pages.dev/vvhan/ipv4.txt",
-      "enabled": true,
-      "name": "BestCF-vvHan-三网"
-    },
-    {
-      "url": "https://bestcf.pages.dev/zhixuanwang/ipv4-onlyip.txt",
-      "enabled": true,
-      "name": "BestCF-ZhiXuan"
-    },
-    {
-      "url": "https://bestcf.pages.dev/cmliu/all.txt",
-      "enabled": true,
-      "name": "BestCF-CM1"
-    },
-    {
-      "url": "https://bestcf.pages.dev/ircf/ipv4.txt",
-      "enabled": true,
-      "name": "BestCF-IRCF"
-    },
-    {
-      "url": "https://bestcf.pages.dev/nirevil/ipv4.txt",
-      "enabled": true,
-      "name": "BestCF-NiREvil-三网"
-    },
-    {
-      "url": "https://bestcf.pages.dev/s5gy/all.txt",
-      "enabled": true,
-      "name": "BestCF-S5公益"
-    },
-    {
-      "url": "https://cf.junzhen.qzz.io/best_ips.txt",
-      "enabled": true,
-      "name": "MJZ-JZ联通"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/svip-s/cloudflare_ip/refs/heads/main/best_ips.txt",
-      "enabled": true,
-      "name": "SS-移动"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/love-ztm/cfip/refs/heads/main/best_ips.txt",
-      "enabled": true,
-      "name": "LZ-电信"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/love-ztm/cfip/refs/heads/main/ubest_ips.txt",
-      "enabled": true,
-      "name": "LZ-联通"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/BestCF/bestcfv4.txt",
-      "enabled": true,
-      "name": "MingYu-IPv4"
-    },
-    {
-      "url": "https://addressesapi.090227.xyz/CloudFlareYes",
-      "enabled": true,
-      "name": "CM优选API-三网优选(edgetunnel推荐)"
-    },
-    {
-      "url": "https://ipdb.api.030101.xyz/?type=bestcf&country=true",
-      "enabled": true,
-      "name": "CM优选IPDB-带地区"
-    },
-    {
-      "url": "https://cf.090227.xyz/ct?ips=100",
-      "enabled": true,
-      "name": "CM三网-电信100"
-    },
-    {
-      "url": "https://cf.090227.xyz/cu?ips=100",
-      "enabled": true,
-      "name": "CM三网-联通100"
-    },
-    {
-      "url": "https://cf.090227.xyz/cmcc?ips=100",
-      "enabled": true,
-      "name": "CM三网-移动100"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist-Pro.txt",
-      "enabled": true,
-      "name": "Senflare-IP"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/einsitang/my-fast-cf-ip/refs/heads/master/fastips.txt",
-      "enabled": true,
-      "name": "Einsitang-快速CF-IP"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt",
-      "enabled": true,
-      "name": "Hubbylei-最佳CF"
-    }
-  ],
-  "ENABLE_REAL_LOCATION_DETECT": true,
-  "REAL_LOCATION_TIMEOUT": 5,
-  "REAL_LOCATION_WORKERS": 150,
-  "ENABLE_RISK_SCORE": true,
-  "MAX_RISK_SCORE": 70,
-  "IPINFO_TOKEN": "1a131396211828"
+    "_comment": "Cloudflare IP 优选工具配置文件 - 基于源项目，适配edgetunnel",
+
+    "USE_GLOBAL_MODE": true,
+    "_comment_USE_GLOBAL_MODE": "true=全局最优；false=每个国家最优",
+
+    "GLOBAL_TOP_N": 1000,
+    "_comment_GLOBAL_TOP_N": "全局模式下最终保留的节点数量",
+
+    "PER_COUNTRY_TOP_N": 10,
+    "_comment_PER_COUNTRY_TOP_N": "分国家模式下每个国家保留的节点数量",
+
+    "BANDWIDTH_CANDIDATES": 1500,
+    "_comment_BANDWIDTH_CANDIDATES": "进入带宽测速的候选节点数",
+
+    "TCP_PROBES": 1,
+    "_comment_TCP_PROBES": "每个节点测试 TCP 连接的次数",
+
+    "MIN_SUCCESS_RATE": 1.0,
+    "_comment_MIN_SUCCESS_RATE": "TCP 最低成功率阈值（0.0~1.0）",
+
+    "TCP_LATENCY_WEIGHT": 0.0,
+    "_comment_TCP_LATENCY_WEIGHT": "TCP延迟在综合排序中的权重",
+
+    "TIMEOUT": 2.0,
+    "_comment_TIMEOUT": "单次 TCP 连接超时时间（秒）",
+
+    "SOCKET_DEFAULT_TIMEOUT": 3,
+    "_comment_SOCKET_DEFAULT_TIMEOUT": "全局 Socket 默认超时（秒）",
+
+    "PROGRESS_PRINT_INTERVAL": 1,
+
+    "FILTER_COUNTRIES_ENABLED": false,
+    "ALLOWED_COUNTRIES": ["US"],
+
+    "PRE_FILTER_BLOCKED_ENABLED": true,
+    "_comment_PRE_FILTER_BLOCKED_ENABLED": "前置黑名单开关，剔除CN国家节点",
+    "PRE_FILTER_BLOCKED_COUNTRIES": ["CN"],
+
+    "PRE_FILTER_PORT_ENABLED": true,
+    "PRE_FILTER_PORTS": [443],
+
+    "ENABLE_WXPUSHER": false,
+    "WXPUSHER_APP_TOKEN": "",
+    "WXPUSHER_UIDS": [""],
+    "WXPUSHER_API_URL": "https://wxpusher.zjiecode.com/api/send/message",
+    "NOTIFY_TIMEOUT": 3,
+    "NOTIFY_CONNECT_TIMEOUT": 3,
+
+    "CF_ENABLED": false,
+    "CF_API_TOKEN": "",
+    "CF_ZONE_ID": "",
+    "CF_DNS_RECORD_NAME": "",
+    "CF_TTL": 60,
+    "CF_PROXIED": false,
+    "CF_DNS_CONNECT_TIMEOUT": 3,
+    "CF_DNS_READ_TIMEOUT": 3,
+    "DNS_RECORD_TYPE": "TXT",
+
+    "ADDITIONAL_SOURCES": [
+        {"url": "https://raw.githubusercontent.com/joname1/BestCFip/main/ipv4.txt", "enabled": true},
+        {"url": "https://api.uouin.com/cloudflare.html", "enabled": true},
+        {"url": "https://ip.164746.xyz/", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/xxzh72/yxym/main/ip.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-A", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/CF-BestIPs-B", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/cf-bestips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/KafeMars/best-ips-domains/main/HK_IP4", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/chris202010/yxym/main/ip.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/xgonce/Cloudflare_IP/main/result.csv", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/best_ips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cf.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.csv", "enabled": true},
+        {"url": "https://bestcf.pages.dev/uouin/all.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/wetest/ipv4.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/luoli/all.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/cfyes/ipv4.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/xinyitang3/ipv4.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/vps789/top20.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/gslege/Cfxyz.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/tiancheng/all.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/tiancheng/hk.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/tiancheng/sg.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/tiancheng/jp.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/tiancheng/kr.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/vvhan/ipv4.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/zhixuanwang/ipv4-onlyip.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/cmliu/all.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/ircf/ipv4.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/nirevil/ipv4.txt", "enabled": true},
+        {"url": "https://bestcf.pages.dev/s5gy/all.txt", "enabled": true},
+        {"url": "https://cf.junzhen.qzz.io/best_ips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/svip-s/cloudflare_ip/refs/heads/main/best_ips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/love-ztm/cfip/refs/heads/main/best_ips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/love-ztm/cfip/refs/heads/main/ubest_ips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/BestCF/bestcfv4.txt", "enabled": true},
+        {"url": "https://addressesapi.090227.xyz/CloudFlareYes", "enabled": true},
+        {"url": "https://ipdb.api.030101.xyz/?type=bestcf&country=true", "enabled": true},
+        {"url": "https://cf.090227.xyz/ct?ips=100", "enabled": true},
+        {"url": "https://cf.090227.xyz/cu?ips=100", "enabled": true},
+        {"url": "https://cf.090227.xyz/cmcc?ips=100", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist-Pro.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/einsitang/my-fast-cf-ip/refs/heads/master/fastips.txt", "enabled": true},
+        {"url": "https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt", "enabled": true},
+        {"url": "https://countrymerge.pages.dev/all.txt", "enabled": true}
+    ],
+
+    "FETCH_MAX_RETRIES": 3,
+    "FETCH_RETRY_DELAY": 3,
+    "FETCH_TIMEOUT": 10,
+    "FETCH_CONNECT_TIMEOUT": 5,
+
+    "IP_CALIBRATION_ENABLED": false,
+    "IP_CALIBRATION_MIN_INTERVAL": 0.1,
+    "IP_CALIBRATION_TOKEN_FILE": "valid_tokens.txt",
+    "IP_CALIBRATION_CACHE_FILE": "ipinfo_cache.txt",
+
+    "OUTPUT_FILE": "ip.txt",
+
+    "ENABLE_LOGGING": false,
+    "LOG_FILE": "cfnb.log",
+
+    "FORCE_DIRECT": false,
+
+    "TEST_AVAILABILITY": true,
+    "_comment_TEST_AVAILABILITY": "关键！启用IP可用性二次筛选，验证IP是否真正可用作ProxyIP",
+
+    "AVAILABILITY_CHECK_API": "https://api.090227.xyz/check",
+    "_comment_AVAILABILITY_CHECK_API": "IP可用性检测API，验证IP+端口是否真正可用",
+
+    "AVAILABILITY_TIMEOUT": 3,
+    "AVAILABILITY_CONNECT_TIMEOUT": 3,
+    "AVAILABILITY_RETRY_MAX": 2,
+    "AVAILABILITY_RETRY_DELAY": 3,
+    "AVAILABILITY_INNER_RETRY_ENABLED": true,
+    "AVAILABILITY_INNER_RETRY_MAX": 2,
+    "AVAILABILITY_INNER_RETRY_DELAY": 3,
+
+    "HTTP_TEST_ENABLED": true,
+    "_comment_HTTP_TEST_ENABLED": "关键！启用HTTP检测，验证响应头server=cloudflare，确认是真正的CF CDN节点",
+
+    "HTTP_TEST_TIMEOUT": 3,
+    "HTTP_TEST_CONNECT_TIMEOUT": 3,
+    "HTTP_TEST_MAX_ROUNDS": 2,
+    "HTTP_TEST_ROUND_DELAY": 3,
+    "HTTP_TEST_INNER_RETRY_ENABLED": true,
+    "HTTP_TEST_MAX_RETRIES": 2,
+    "HTTP_TEST_RETRY_DELAY": 3,
+    "HTTP_TEST_METHOD": "HEAD",
+    "HTTP_LATENCY_WEIGHT": 3.0,
+    "JITTER_WEIGHT": 3.0,
+    "HTTP_JITTER_SAMPLES": 3,
+
+    "FILTER_IPV6_AVAILABILITY": true,
+    "FILTER_BLOCKED_COUNTRIES_ENABLED": true,
+    "BLOCKED_COUNTRIES": [
+        "BD", "BI", "BY", "CD", "CF", "CN", "CU", "DE", "ET", "HK",
+        "IR", "KP", "LY", "MO", "NG", "NL", "PK", "RU", "SD", "SO",
+        "SY", "TH", "TW", "UA", "VE", "VN", "YE", "ZW"
+    ],
+
+    "DNS_IP_RISK_FILTER_ENABLED": false,
+    "DNS_IP_RISK_MAX_LEVEL": "高风险",
+
+    "DNS_UPDATE_TARGET_COUNT": 15,
+
+    "BANDWIDTH_SIZE_MB": 1.0,
+    "BANDWIDTH_TIMEOUT": 3,
+    "BANDWIDTH_RETRY_MAX": 2,
+    "BANDWIDTH_RETRY_DELAY": 3,
+    "BANDWIDTH_URL_TEMPLATE": "https://speed.cloudflare.com/__down?bytes={bytes}",
+    "BANDWIDTH_PROCESS_BUFFER": 2,
+    "BANDWIDTH_CONNECT_TIMEOUT": 3,
+
+    "SPEED_WEIGHT": 3.0,
+
+    "IP_CALIBRATION_CONCURRENCY": 300,
+
+    "MAX_WORKERS": 300,
+    "AVAILABILITY_WORKERS": 32,
+    "FALLBACK_WORKERS": 32,
+    "HTTP_TEST_WORKERS": 32,
+    "BANDWIDTH_WORKERS": 3,
+
+    "DNS_UPDATE_MAX_RETRIES": 3,
+    "DNS_UPDATE_RETRY_DELAY": 3,
+    "GITHUB_SYNC_MAX_RETRIES": 3,
+    "GITHUB_SYNC_RETRY_DELAY": 3,
+    "GIT_SYNC_PROCESS_TIMEOUT": 180,
+
+    "AD_HEADER_ENABLED": false,
+    "AD_HEADER_LINES": [],
+    "AD_FOOTER_ENABLED": false,
+    "AD_FOOTER_LINES": [],
+    "AD_PERLINE_ENABLED": false,
+    "AD_PERLINE_TEXT": "",
+
+    "IP_TXT_SHOW_BANDWIDTH": false,
+    "IP_TXT_SHOW_HTTP_LATENCY": false,
+    "IP_TXT_SHOW_HTTP_JITTER": false,
+    "IP_TXT_SHOW_LATENCY": false
 }
