@@ -686,74 +686,45 @@ def _parse_html_nodes(text):
 
 
 def _parse_text_nodes(text):
+    """自适应文本解析：支持 IP:PORT#标签、IP#标签、IP:PORT、纯IP、HTML表格等"""
     nodes = []
     pending = []
     pending_set = set()
-    # 默认端口配置
     DEFAULT_PORT = 443
 
-    tokens = text.split()
-    for token in tokens:
-        # 清理token中的逗号、分号等尾部符号
-        token = token.rstrip(',;，；\r\n')
-
-        # 匹配 IP:PORT#标签 格式
-        if '#' in token:
-            try:
-                ipport, label = token.split('#', 1)
-            except ValueError:
-                continue
-            ipport = ipport.strip()
-            label = label.strip()
-
-            if ipport.startswith('['):
-                continue
-
-            # IP:PORT#标签 格式
-            if re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', ipport):
-                code = extract_country_code(label)
-                if code:
-                    nodes.append(f"{ipport}#{code}")
-                else:
-                    if ipport not in pending_set:
-                        pending_set.add(ipport)
-                        pending.append(ipport)
-                continue
-
-            # IP#标签 格式（无端口）→ 补默认端口
-            if re.match(r'^\d+\.\d+\.\d+\.\d+$', ipport):
-                ipport_with_port = f"{ipport}:{DEFAULT_PORT}"
-                code = extract_country_code(label)
-                if code:
-                    nodes.append(f"{ipport_with_port}#{code}")
-                else:
-                    if ipport_with_port not in pending_set:
-                        pending_set.add(ipport_with_port)
-                        pending.append(ipport_with_port)
-                continue
-
+    # 第一步：用正则从全文提取所有 IP:PORT#标签 和 IP#标签 格式
+    # 支持 #后面含空格的标签（如 IP#CF 电信优选），在行尾或|处截止
+    for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+)(?::(\d+))?#([^\r\n|]*)', text):
+        ip = m.group(1)
+        port = m.group(2) or str(DEFAULT_PORT)
+        label = m.group(3).strip()
+        ipport = f"{ip}:{port}"
+        if ipport in pending_set:
             continue
+        code = extract_country_code(label)
+        if code:
+            nodes.append(f"{ipport}#{code}")
+            pending_set.add(ipport)
+        else:
+            pending_set.add(ipport)
+            pending.append(ipport)
 
-        # 匹配纯 IP:PORT 格式（无国家代码）
-        pure_match = re.match(r'^(\d+\.\d+\.\d+\.\d+):(\d+)$', token)
-        if pure_match:
-            ipport = pure_match.group(0)
-            if ipport not in pending_set:
-                pending_set.add(ipport)
-                pending.append(ipport)
-            continue
+    # 第二步：提取剩余的 IP:PORT（不带#标签的）
+    for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+):(\d+)', text):
+        ipport = f"{m.group(1)}:{m.group(2)}"
+        if ipport not in pending_set:
+            pending_set.add(ipport)
+            pending.append(ipport)
 
-        # 匹配纯 IP 格式（无端口无国家代码）→ 补默认端口
-        bare_ip_match = re.match(r'^(\d+\.\d+\.\d+\.\d+)$', token)
-        if bare_ip_match:
-            ip = bare_ip_match.group(1)
-            ipport = f"{ip}:{DEFAULT_PORT}"
-            if ipport not in pending_set:
-                pending_set.add(ipport)
-                pending.append(ipport)
-            continue
+    # 第三步：提取剩余的纯IP（不带端口和标签的）
+    for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+)', text):
+        ip = m.group(1)
+        ipport = f"{ip}:{DEFAULT_PORT}"
+        if ipport not in pending_set and ip not in pending_set:
+            pending_set.add(ipport)
+            pending.append(ipport)
 
-    # 如果纯文本解析结果太少，尝试HTML解析
+    # 第四步：如果上述正则解析太少，回退到HTML解析
     if len(nodes) + len(pending) < 3:
         html_nodes = _parse_html_nodes(text)
         for item in html_nodes:
