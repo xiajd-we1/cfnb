@@ -577,6 +577,15 @@ def _query_country(ip, port):
 def _resolve_countries_batch(ipports):
     results = {}
     total = len(ipports)
+
+    # 当pending节点超过200个时，跳过API查询直接分配XX（避免大量API调用导致超时）
+    MAX_API_QUERY_COUNT = 200
+    if total > MAX_API_QUERY_COUNT:
+        print(f"待查询节点 {total} 个，超过 {MAX_API_QUERY_COUNT} 个上限，跳过API查询直接分配默认国家代码XX。")
+        for ipport in ipports:
+            results[ipport] = None
+        return results
+
     completed = 0
     last_print = time.time()
 
@@ -603,36 +612,93 @@ def _resolve_countries_batch(ipports):
     return results
 
 
+def _parse_html_nodes(text):
+    """从HTML/Markdown内容中提取IP节点（支持表格、列表、链接等格式）"""
+    nodes = []
+    seen = set()
+    # 提取 IP:PORT 模式
+    for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+):(\d+)', text):
+        ip, port = m.group(1), m.group(2)
+        key = f"{ip}:{port}"
+        if key not in seen:
+            seen.add(key)
+            nodes.append(key)
+    # 提取纯 IP（后续补默认端口443）
+    for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+)', text):
+        ip = m.group(1)
+        if ip not in seen:
+            seen.add(ip)
+            nodes.append(ip)
+    return nodes
+
+
 def _parse_text_nodes(text):
     nodes = []
     pending = []
+    pending_set = set()
+    # 默认端口配置
+    DEFAULT_PORT = 443
 
     tokens = text.split()
     for token in tokens:
-        pure_match = re.match(r'^(\d+\.\d+\.\d+\.\d+:\d+)$', token)
+        # 清理token中的逗号、分号等尾部符号
+        token = token.rstrip(',;，；\r\n')
+
+        # 匹配 IP:PORT#标签 格式
+        if '#' in token:
+            try:
+                ipport, label = token.split('#', 1)
+            except ValueError:
+                continue
+            ipport = ipport.strip()
+            label = label.strip()
+
+            if ipport.startswith('['):
+                continue
+            if not re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', ipport):
+                continue
+
+            code = extract_country_code(label)
+            if code:
+                nodes.append(f"{ipport}#{code}")
+            else:
+                if ipport not in pending_set:
+                    pending_set.add(ipport)
+                    pending.append(ipport)
+            continue
+
+        # 匹配纯 IP:PORT 格式（无国家代码）
+        pure_match = re.match(r'^(\d+\.\d+\.\d+\.\d+):(\d+)$', token)
         if pure_match:
-            pending.append(pure_match.group(1))
+            ipport = pure_match.group(0)
+            if ipport not in pending_set:
+                pending_set.add(ipport)
+                pending.append(ipport)
             continue
 
-        if '#' not in token:
-            continue
-        try:
-            ipport, label = token.split('#', 1)
-        except ValueError:
-            continue
-        ipport = ipport.strip()
-        label = label.strip()
-
-        if ipport.startswith('['):
-            continue
-        if not re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', ipport):
+        # 匹配纯 IP 格式（无端口无国家代码）→ 补默认端口
+        bare_ip_match = re.match(r'^(\d+\.\d+\.\d+\.\d+)$', token)
+        if bare_ip_match:
+            ip = bare_ip_match.group(1)
+            ipport = f"{ip}:{DEFAULT_PORT}"
+            if ipport not in pending_set:
+                pending_set.add(ipport)
+                pending.append(ipport)
             continue
 
-        code = extract_country_code(label)
-        if code:
-            nodes.append(f"{ipport}#{code}")
-        else:
-            pending.append(ipport)
+    # 如果纯文本解析结果太少，尝试HTML解析
+    if len(nodes) + len(pending) < 3:
+        html_nodes = _parse_html_nodes(text)
+        for item in html_nodes:
+            if ':' in item:
+                if item not in pending_set:
+                    pending_set.add(item)
+                    pending.append(item)
+            else:
+                ipport = f"{item}:{DEFAULT_PORT}"
+                if ipport not in pending_set:
+                    pending_set.add(ipport)
+                    pending.append(ipport)
 
     if pending:
         print(f"{len(pending)} 个节点未能识别或缺少国家，通过可用性检测 API 查询国家...")
@@ -640,6 +706,9 @@ def _parse_text_nodes(text):
         for ipport, code in resolved.items():
             if code:
                 nodes.append(f"{ipport}#{code}")
+            else:
+                # API查询失败时分配默认国家代码XX，不丢弃节点
+                nodes.append(f"{ipport}#XX")
 
     return nodes
 
